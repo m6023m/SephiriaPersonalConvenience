@@ -7,15 +7,15 @@ using HarmonyLib;
 using Mirror;
 using UnityEngine;
 
-[assembly: System.Reflection.AssemblyVersion("1.0.5.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.0.5.0")]
+[assembly: System.Reflection.AssemblyVersion("1.0.6.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.0.6.0")]
 
 namespace SephiriaDicePreview
 {
-    [BepInPlugin("local.sephiria.personal-convenience", "Sephiria Personal Convenience", "1.0.5")]
+    [BepInPlugin("local.sephiria.personal-convenience", "Sephiria Personal Convenience", "1.0.6")]
     public sealed class PersonalConveniencePlugin : BaseUnityPlugin
     {
-        public const string Version = "1.0.5";
+        public const string Version = "1.0.6";
         public static PersonalConveniencePlugin Instance;
         public ConfigEntry<bool> ShowPreview;
         public ConfigEntry<bool> ShowComboHighlight;

@@ -148,6 +148,13 @@ public sealed class StageSmoke : BaseUnityPlugin
         yield return Capture(finalPanel, "retry-final.png");
         yield return new WaitForSecondsRealtime(1);
         finalPanel.Close();
+        SaveManager.Current.SetInt("Sapphire", 20);
+        Player.GetComponent<PlayerLocalDataStorage>().Networksapphire = 20;
+        SaveManager.Save(true, false);
+        while (SaveManager.IsSaving != SaveManager.ESaveState.None) yield return null;
+        Player.GetComponent<PlayerSpawner>().NetworksapphireInRun = 200;
+        int totalPaid = 0; int retryNumber = 0;
+        int[] costs = { 2, 4, 8, 16, 32, 32, 32 };
         for (int stageIndex = 0; stageIndex < (Environment.GetEnvironmentVariable("STAGE_UI_ONLY") == "1" ? 1 : 2); stageIndex++)
         {
             if (stageIndex > 0) {
@@ -162,7 +169,7 @@ public sealed class StageSmoke : BaseUnityPlugin
             string currentStage = DungeonManager.Instance.generatedFloors[head].stageName;
             var roomGuids = DungeonManager.Instance.GetAllFloorInStage(currentStage).Where(f => f.guid != head).Select(f => f.guid).Take(2).ToArray();
             int headMoney = Player.Money;
-            for (int attempt = 0; attempt < (Environment.GetEnvironmentVariable("STAGE_UI_ONLY") == "1" ? 1 : 2); attempt++) {
+            for (int attempt = 0; attempt < (Environment.GetEnvironmentVariable("STAGE_UI_ONLY") == "1" ? 1 : (stageIndex == 0 ? 3 : 4)); attempt++) {
                 string nextFloor = roomGuids[attempt % roomGuids.Length];
                 Player.AddMoney(123 + attempt); // Persist progress that differs from the stage entrance.
                 DungeonManager.Instance.MoveTogether(nextFloor, "FLOORSTARTING", 0, false, true);
@@ -173,7 +180,7 @@ public sealed class StageSmoke : BaseUnityPlugin
                 string roomInv = InventorySignature(); int roomMoney = Player.Money; float roomHp = Player.hp; int roomMp = Player.MP;
                 if (roomMoney == headMoney) throw new Exception("Room fixture does not distinguish stage progress");
                 Player.AddMoney(777); Player.Networkmp = 0;
-                Player.GetComponent<PlayerSpawner>().NetworksapphireInRun = 17;
+                Player.GetComponent<PlayerSpawner>().NetworksapphireInRun = 999; // Must not fund retry with rewards earned after room entry.
                 Player.Inventory.ForceRemoveAll();
                 int deathCount = SaveManager.Current.GetInt("DeathCount", 0);
                 int settlements = 0; Player.GetComponent<PlayerSpawner>().OnGameOverServerside += delegate { settlements++; };
@@ -204,6 +211,32 @@ public sealed class StageSmoke : BaseUnityPlugin
                         if (plugin.Busy || !Player.IsDead || death.IsOpened) throw new Exception("Corrupt room checkpoint changed session");
                         Log("PASS corrupt room checkpoint refused before settlement; no new game");
                     } finally { File.WriteAllBytes(checkpointPath, checkpoint); }
+                    try {
+                        var insufficient = new SaveData(true, ".sav", 1);
+                        insufficient.LoadFromString(File.ReadAllText(checkpointPath));
+                        insufficient.SetInt("Player0SapphireInRun", 0);
+                        insufficient.SetInt("Player0SapphireUseInRun", 19);
+                        insufficient.version = Application.version; insufficient.enableCloudSave = false;
+                        insufficient.Save(checkpointPath);
+                        byte[] deniedBefore = File.ReadAllBytes(checkpointPath);
+                        StageRetry.Instance.Retry();
+                        if(plugin.Busy || !Player.IsDead || !File.ReadAllBytes(checkpointPath).SequenceEqual(deniedBefore))
+                            throw new Exception("Insufficient checkpoint sapphires were charged or allowed");
+                        Log("PASS insufficient room-entry balance rejected despite 999 current-room sapphires; save unchanged");
+                    } finally { File.WriteAllBytes(checkpointPath, checkpoint); }
+                    var paymentType = typeof(StageRetry).Assembly.GetType("SephiriaRoomRetry.RetryPayment");
+                    var payment = paymentType.GetMethod("Read", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                        .Invoke(null, new object[] { SaveManager.Binded, 0 });
+                    paymentType.GetMethod("Commit", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Invoke(payment, null);
+                    paymentType.GetMethod("Refund", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Invoke(payment, null);
+                    if(!File.ReadAllBytes(checkpointPath).SequenceEqual(checkpoint)) throw new Exception("Payment refund did not restore exact checkpoint");
+                    Log("PASS payment rollback restores exact checkpoint bytes");
+                    using (var locked = new FileStream(checkpointPath, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+                        StageRetry.Instance.Retry();
+                        if(plugin.Busy || !Player.IsDead) throw new Exception("Locked payment save started retry");
+                    }
+                    if(!File.ReadAllBytes(checkpointPath).SequenceEqual(checkpoint)) throw new Exception("Failed payment modified checkpoint");
+                    Log("PASS locked payment save refuses retry without charging");
                 }
                 var connection = NetworkServer.localConnection;
                 choice.yesButton.onClick.Invoke();
@@ -214,11 +247,26 @@ public sealed class StageSmoke : BaseUnityPlugin
                 if (plugin.Busy || !Player || Player.IsDead || !Player.CanMove || Player.currentFloorGuid != nextFloor || Player.currentFloorGuid == head || NetworkServer.localConnection != connection) throw new Exception("Current room restore failed");
                 if (Player.Money != roomMoney || Player.hp != roomHp || Player.MP != roomMp || InventorySignature() != roomInv || SaveManager.Current.GetInt("Sapphire", 0) != sapphire)
                     throw new Exception("Room state mismatch hp=" + Player.hp + "/" + roomHp + " mp=" + Player.MP + "/" + roomMp + " money=" + Player.Money + "/" + roomMoney + " sapphire=" + SaveManager.Current.GetInt("Sapphire", 0) + "/" + sapphire);
+                totalPaid += costs[retryNumber++];
+                var localData = Player.GetComponent<PlayerLocalDataStorage>();
+                if(localData.sapphireUseInRun != totalPaid || localData.GetSapphire() != 220 - totalPaid ||
+                    SaveManager.CurrentRun.GetInt("PersonalConvenience_DeathRoomRetries", 0) != Math.Min(5, retryNumber))
+                    throw new Exception("Paid retry mismatch: spent=" + localData.sapphireUseInRun + " expected=" + totalPaid + " balance=" + localData.GetSapphire());
+                Log("PASS paid retry cost=" + costs[retryNumber-1] + " accumulated=" + totalPaid + " balance=" + localData.GetSapphire());
+                if (retryNumber == 1) {
+                    var paidPanel = UIManager.Instance.GetElement<UI_PausePanel>(); paidPanel.Open();
+                    plugin.Retry(paidPanel);
+                    while(plugin.Busy) yield return null;
+                    if(Player.GetComponent<PlayerLocalDataStorage>().sapphireUseInRun != totalPaid ||
+                        SaveManager.CurrentRun.GetInt("PersonalConvenience_DeathRoomRetries", 0) != 1)
+                        throw new Exception("Pause retry reset death payment");
+                    Log("PASS pause retry stays free and preserves paid cost/count");
+                }
                 Log("PASS stage=" + currentStage + " attempt=" + attempt + " currentRoom=" + nextFloor + " stageHead=" + head + " HP/MP/inventory/money/sapphire restored; same session; alive and movable");
             }
         }
         SwitchManager.SetDestinySwitch("EnableTowntreePortal", true);
-        Player.GetComponent<PlayerSpawner>().NetworksapphireInRun=17;
+        int expectedSettlement = SaveManager.Current.GetInt("Sapphire", 0) + UI_GameOverLabel.CalculateRunEarnedSapphire(Player.GetComponent<LevelController>(), Player.GetComponent<PlayerSpawner>(), Player) - totalPaid;
         int resultEvents=0;Player.GetComponent<PlayerSpawner>().OnGameOverServerside+=delegate{resultEvents++;};
         FatalHit();var resultHolder=UIManager.Instance.GetElement<UI_MessageBoxHolder>();UI_MessageBox_YesNo resultChoice=null;
         end=Time.realtimeSinceStartup+30;
@@ -227,7 +275,20 @@ public sealed class StageSmoke : BaseUnityPlugin
         resultChoice.noButton.onClick.Invoke();yield return new WaitForSecondsRealtime(3);
         if(!UIManager.Instance.GetElement<UI_GameOverLabel>().IsOpened || resultEvents!=1 || StageRetry.Instance.AwaitingDecision || SaveManager.CurrentRun.enableSave)
             throw new Exception("Native result path failed or ran twice");
-        Log("PASS result choice invokes native settlement exactly once");
+        if(SaveManager.Current.GetInt("Sapphire", 0) != expectedSettlement) throw new Exception("Native settlement double-charged or refunded payment");
+        Log("PASS result choice invokes native settlement exactly once; prior retry costs settled once");
+        UIManager.Instance.GetElement<UI_GameOverLabel>().Close();
+        GameTimeManager.Instance.ResetTimeScaleTo1();
+        ((HorayNetworkManager)NetworkManager.singleton).RestartGame();
+        yield return new WaitForSecondsRealtime(5);
+        end = Time.realtimeSinceStartup + 60;
+        while ((!Player || !Player.CanMove || Player.loadingScreenType != -1 || SaveManager.IsSaving != SaveManager.ESaveState.None) && Time.realtimeSinceStartup < end) yield return null;
+        DungeonManager.Instance.LoadStageAndMove(RaceDatabase.FindById(DungeonManager.Instance.raceId).stages[0].name);
+        yield return new WaitForSecondsRealtime(4);
+        while (SaveManager.IsSaving != SaveManager.ESaveState.None) yield return null;
+        if(SaveManager.CurrentRun.GetInt("PersonalConvenience_DeathRoomRetries",0)!=0 || Player.GetComponent<PlayerLocalDataStorage>().sapphireUseInRun!=0)
+            throw new Exception("New adventure did not reset retry cost");
+        Log("PASS native new adventure resets retry count and cost to 2");
         Log("PASS all pre-result current-room retry tests");
         Application.Quit(0);
     }

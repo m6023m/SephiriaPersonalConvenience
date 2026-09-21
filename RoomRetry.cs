@@ -17,6 +17,7 @@ namespace SephiriaRoomRetry
         internal static RoomRetryPlugin Instance;
         private BepInEx.Logging.ManualLogSource Logger { get { return SephiriaDicePreview.PersonalConveniencePlugin.Instance.Log; } }
         public bool Busy { get; internal set; }
+        internal bool ResumeSucceeded { get; private set; }
 
         private void Awake()
         {
@@ -81,6 +82,7 @@ namespace SephiriaRoomRetry
 
         internal IEnumerator GuardResume(string slot, string floor, int seed)
         {
+            ResumeSucceeded = false;
             var routine = Resume(slot, floor, seed);
             while (true)
             {
@@ -140,7 +142,7 @@ namespace SephiriaRoomRetry
                 var player = Player;
                 if (player && player.currentFloorGuid == floor && player.loadingScreenType == -1 && player.CanMove && !dungeon.IsHostTraveling)
                 {
-                    Busy = false; Logger.LogInfo("Retry complete: " + floor + " in " + (Time.realtimeSinceStartup - began).ToString("F2") + "s (same session)"); yield break;
+                    ResumeSucceeded = true; Busy = false; Logger.LogInfo("Retry complete: " + floor + " in " + (Time.realtimeSinceStartup - began).ToString("F2") + "s (same session)"); yield break;
                 }
                 yield return null;
             }

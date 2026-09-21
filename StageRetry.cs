@@ -33,9 +33,16 @@ namespace SephiriaRoomRetry
             while (SaveManager.IsSaving != SaveManager.ESaveState.None) yield return null;
             pendingDeath.CloseSomeUI();
             GameTimeManager.Instance.Pause();
+            string paymentText;
+            try
+            {
+                var quote = RetryPayment.Read(Slot, pendingDeath.currentPlayerIdxForSave);
+                paymentText = "필요: 사파이어 " + quote.Cost + "개\n방 진입 시 보유: " + Math.Max(0L, quote.Available) + "개";
+            }
+            catch (Exception) { paymentText = "방 진입 저장을 확인할 수 없습니다."; }
             bool decided = false;
             var box = UIManager.Instance.GetElement<UI_MessageBoxHolder>().OpenYesNo(
-                "사망했습니다.\n\n결과 정산 전에 이번 방을 다시 시작할 수 있습니다.\n지금 사망한 방에 진입했던 상태로 돌아갑니다.",
+                "사망했습니다.\n\n사파이어를 사용해 이번 방을 다시 시작합니다.\n" + paymentText + "\n방 진입 상태로 돌아갑니다.",
                 delegate { decided = true; Retry(); if (!RoomRetryPlugin.Instance.Busy) StartCoroutine(OfferRetry()); },
                 delegate { decided = true; StartCoroutine(ShowResult()); }) as UI_MessageBox_YesNo;
             if (box)
@@ -88,8 +95,12 @@ namespace SephiriaRoomRetry
                 // Do not save the dead player or overwrite it with a stage-entry snapshot.
                 if (!RoomRetryPlugin.CheckpointMatches(slot, room, seed))
                 { Message("현재 방의 이어하기 저장이 없어 재시도할 수 없습니다."); return; }
+                var payment = RetryPayment.Read(slot, pendingDeath.currentPlayerIdxForSave);
+                if (payment.Available < payment.Cost)
+                { Message("방 진입 시점의 사파이어가 부족합니다. 필요: " + payment.Cost + "개 / 보유: " + Math.Max(0L, payment.Available) + "개"); return; }
+                payment.Commit();
                 RoomRetryPlugin.Instance.Busy = true;
-                StartCoroutine(RestoreRoom(slot, room, seed));
+                StartCoroutine(RestoreRoom(slot, room, seed, payment));
             }
             catch (Exception error)
             {
@@ -98,11 +109,16 @@ namespace SephiriaRoomRetry
                 Message("현재 방의 저장을 확인하지 못했습니다. 결과 선택을 유지합니다.");
             }
         }
-        private IEnumerator RestoreRoom(string slot, string room, int seed)
+        private IEnumerator RestoreRoom(string slot, string room, int seed, RetryPayment payment)
         {
             yield return RoomRetryPlugin.Instance.GuardResume(slot, room, seed);
-            if (RoomRetryPlugin.Player && !RoomRetryPlugin.Player.IsDead) pendingDeath = null;
-            else if (pendingDeath) StartCoroutine(OfferRetry());
+            if (RoomRetryPlugin.Instance.ResumeSucceeded) pendingDeath = null;
+            else
+            {
+                try { payment.Refund(); }
+                catch (Exception error) { Debug.LogError("Retry payment refund failed: " + error); Message("재시도 비용 복원에 실패했습니다. 저장 파일을 확인해 주세요."); }
+                if (pendingDeath) StartCoroutine(OfferRetry());
+            }
         }
         private static void Message(string text) { UIManager.Instance.GetElement<UI_SystemMessage>().Open(text, 4f); }
     }
