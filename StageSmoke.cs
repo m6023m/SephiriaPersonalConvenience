@@ -158,16 +158,20 @@ public sealed class StageSmoke : BaseUnityPlugin
                 while ((Player.loadingScreenType != -1 || SaveManager.IsSaving != SaveManager.ESaveState.None) && Time.realtimeSinceStartup < end) yield return null;
             }
             string head = Player.currentFloorGuid;
-            string stageInv = InventorySignature(); int stageMoney = Player.Money; float stageHp = Player.hp; int stageMp = Player.MP;
             int sapphire = SaveManager.Current.GetInt("Sapphire", 0);
             string currentStage = DungeonManager.Instance.generatedFloors[head].stageName;
-            string nextFloor = DungeonManager.Instance.GetAllFloorInStage(currentStage).First(f => f.guid != head).guid;
+            var roomGuids = DungeonManager.Instance.GetAllFloorInStage(currentStage).Where(f => f.guid != head).Select(f => f.guid).Take(2).ToArray();
+            int headMoney = Player.Money;
             for (int attempt = 0; attempt < (Environment.GetEnvironmentVariable("STAGE_UI_ONLY") == "1" ? 1 : 2); attempt++) {
+                string nextFloor = roomGuids[attempt % roomGuids.Length];
+                Player.AddMoney(123 + attempt); // Persist progress that differs from the stage entrance.
                 DungeonManager.Instance.MoveTogether(nextFloor, "FLOORSTARTING", 0, false, true);
                 yield return new WaitForSecondsRealtime(3);
                 end = Time.realtimeSinceStartup + 60;
                 while ((Player.loadingScreenType != -1 || SaveManager.IsSaving != SaveManager.ESaveState.None) && Time.realtimeSinceStartup < end) yield return null;
                 if (Player.currentFloorGuid == head) throw new Exception("Did not leave stage head");
+                string roomInv = InventorySignature(); int roomMoney = Player.Money; float roomHp = Player.hp; int roomMp = Player.MP;
+                if (roomMoney == headMoney) throw new Exception("Room fixture does not distinguish stage progress");
                 Player.AddMoney(777); Player.Networkmp = 0;
                 Player.GetComponent<PlayerSpawner>().NetworksapphireInRun = 17;
                 Player.Inventory.ForceRemoveAll();
@@ -192,13 +196,13 @@ public sealed class StageSmoke : BaseUnityPlugin
                 Log("PASS pre-result choice; death count and sapphire unchanged; run save preserved; settlement callbacks zero; first-death automatic restart suppressed");
                 yield return Capture(holder, "stage-before-result-" + stageIndex + "-" + attempt + ".png");
                 if (stageIndex == 0 && attempt == 0) {
-                    string checkpointPath = Path.Combine(SaveData.CommonPath, SaveManager.Binded + ".stage-retry");
+                    string checkpointPath = Path.Combine(SaveData.CommonPath, SaveManager.Binded + "TMP.sav");
                     byte[] checkpoint = File.ReadAllBytes(checkpointPath);
                     try {
                         File.WriteAllText(checkpointPath, "invalid");
                         StageRetry.Instance.Retry();
-                        if (plugin.Busy || !Player.IsDead || death.IsOpened) throw new Exception("Corrupt snapshot changed session");
-                        Log("PASS corrupt snapshot refused before settlement; no new game");
+                        if (plugin.Busy || !Player.IsDead || death.IsOpened) throw new Exception("Corrupt room checkpoint changed session");
+                        Log("PASS corrupt room checkpoint refused before settlement; no new game");
                     } finally { File.WriteAllBytes(checkpointPath, checkpoint); }
                 }
                 var connection = NetworkServer.localConnection;
@@ -207,10 +211,10 @@ public sealed class StageSmoke : BaseUnityPlugin
                 StageRetry.Instance.Retry(); // Duplicate request must be ignored.
                 end = Time.realtimeSinceStartup + 60;
                 while (plugin.Busy && Time.realtimeSinceStartup < end) yield return null;
-                if (plugin.Busy || !Player || Player.IsDead || !Player.CanMove || Player.currentFloorGuid != head || NetworkServer.localConnection != connection) throw new Exception("Stage restore failed");
-                if (Player.Money != stageMoney || Player.hp != stageHp || Player.MP != stageMp || InventorySignature() != stageInv || SaveManager.Current.GetInt("Sapphire", 0) != sapphire)
-                    throw new Exception("Stage state mismatch hp=" + Player.hp + "/" + stageHp + " mp=" + Player.MP + "/" + stageMp + " money=" + Player.Money + "/" + stageMoney + " sapphire=" + SaveManager.Current.GetInt("Sapphire", 0) + "/" + sapphire);
-                Log("PASS stage=" + currentStage + " attempt=" + attempt + " firstRoom=" + head + " HP/MP/inventory/money/sapphire restored; same session; alive and movable");
+                if (plugin.Busy || !Player || Player.IsDead || !Player.CanMove || Player.currentFloorGuid != nextFloor || Player.currentFloorGuid == head || NetworkServer.localConnection != connection) throw new Exception("Current room restore failed");
+                if (Player.Money != roomMoney || Player.hp != roomHp || Player.MP != roomMp || InventorySignature() != roomInv || SaveManager.Current.GetInt("Sapphire", 0) != sapphire)
+                    throw new Exception("Room state mismatch hp=" + Player.hp + "/" + roomHp + " mp=" + Player.MP + "/" + roomMp + " money=" + Player.Money + "/" + roomMoney + " sapphire=" + SaveManager.Current.GetInt("Sapphire", 0) + "/" + sapphire);
+                Log("PASS stage=" + currentStage + " attempt=" + attempt + " currentRoom=" + nextFloor + " stageHead=" + head + " HP/MP/inventory/money/sapphire restored; same session; alive and movable");
             }
         }
         SwitchManager.SetDestinySwitch("EnableTowntreePortal", true);
@@ -224,7 +228,7 @@ public sealed class StageSmoke : BaseUnityPlugin
         if(!UIManager.Instance.GetElement<UI_GameOverLabel>().IsOpened || resultEvents!=1 || StageRetry.Instance.AwaitingDecision || SaveManager.CurrentRun.enableSave)
             throw new Exception("Native result path failed or ran twice");
         Log("PASS result choice invokes native settlement exactly once");
-        Log("PASS all pre-result stage retry tests");
+        Log("PASS all pre-result current-room retry tests");
         Application.Quit(0);
     }
 

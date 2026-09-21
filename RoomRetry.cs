@@ -68,7 +68,7 @@ namespace SephiriaRoomRetry
             catch (Exception error) { Busy = false; Logger.LogError(error); Message("저장을 확인하지 못했습니다. 현재 방을 유지합니다."); }
         }
 
-        private static bool CheckpointMatches(string slot, string floor, int seed)
+        internal static bool CheckpointMatches(string slot, string floor, int seed)
         {
             var saved = new SaveData(true, ".sav", 1);
             var profile = new SaveData(true);
@@ -76,7 +76,7 @@ namespace SephiriaRoomRetry
             string profilePath = Path.Combine(SaveData.CommonPath, slot + ".sav");
             return File.Exists(runPath) && File.Exists(profilePath) &&
                 saved.LoadFromString(File.ReadAllText(runPath)) && profile.LoadFromString(File.ReadAllText(profilePath)) && saved.GetBool("RunStarted", false) &&
-                saved.GetInt("FloorCount", 0) > 0 && saved.GetString("LastFloorGuid", "") == floor && saved.GetInt("Seed", -1) == seed;
+                saved.GetInt("FloorCount", 0) > 0 && saved.ContainsKey("CurrentGame") && saved.GetInt("SavedPlayerCount", 0) > 0 && saved.GetString("LastFloorGuid", "") == floor && saved.GetInt("Seed", -1) == seed;
         }
 
         internal IEnumerator GuardResume(string slot, string floor, int seed)
