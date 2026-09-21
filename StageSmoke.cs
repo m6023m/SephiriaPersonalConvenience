@@ -50,7 +50,7 @@ public sealed class StageSmoke : BaseUnityPlugin
         if (plugin.CanRetry(out reason)) throw new Exception("Retry allowed in training");
         Log("training-blocked=" + reason);
         SaveManager.Current.SetString("PlayerName", "RETRY TEST");
-        SwitchManager.SetDestinySwitch("EnableTowntreePortal", true);
+        SwitchManager.SetDestinySwitch("EnableTowntreePortal", false);
         var charm = Resources.LoadAll<ItemEntity>("Item").First(i => i.type == EItemType.Charm && i.activeType == EItemActiveType.Default);
         Player.Inventory.AddItem(new ItemMetadata(190000001, charm.id, 1), 0, false);
         Player.Inventory.AddItem(new ItemMetadata(190000002, 0, 3), 0, false);
@@ -171,30 +171,40 @@ public sealed class StageSmoke : BaseUnityPlugin
                 Player.AddMoney(777); Player.Networkmp = 0;
                 Player.GetComponent<PlayerSpawner>().NetworksapphireInRun = 17;
                 Player.Inventory.ForceRemoveAll();
-                Player.ForceDie();
+                int deathCount = SaveManager.Current.GetInt("DeathCount", 0);
+                int settlements = 0; Player.GetComponent<PlayerSpawner>().OnGameOverServerside += delegate { settlements++; };
+                FatalHit();
                 var death = UIManager.Instance.GetElement<UI_GameOverLabel>();
-                end = Time.realtimeSinceStartup + 40;
-                while ((!death.IsOpened || !death.button.gameObject.activeInHierarchy || !death.button.interactable || SaveManager.IsSaving != SaveManager.ESaveState.None) && Time.realtimeSinceStartup < end) yield return null;
-                yield return new WaitForSecondsRealtime(1);
-                if (SaveManager.Current.GetInt("Sapphire", 0) <= sapphire) throw new Exception("Positive death settlement was not exercised");
-                Log("death settlement sapphire=" + SaveManager.Current.GetInt("Sapphire", 0) + ";stage entry=" + sapphire);
-                var stageMenu = death.GetComponent<StageRetryMenu>();
-                if (!stageMenu || !stageMenu.Button.gameObject.activeInHierarchy) throw new Exception("Death retry button absent");
-                yield return Capture(death, "stage-death-" + stageIndex + "-" + attempt + ".png");
+                var holder = UIManager.Instance.GetElement<UI_MessageBoxHolder>();
+                UI_MessageBox_YesNo choice = null;
+                end = Time.realtimeSinceStartup + 30;
+                while (Time.realtimeSinceStartup < end) {
+                    choice = holder.GetComponentsInChildren<UI_MessageBox_YesNo>().FirstOrDefault(bx=>bx.name=="StageRetryBeforeResult");
+                    if(choice)break; yield return null;
+                }
+                if(!choice)throw new Exception("Pre-result retry choice absent");
+                yield return new WaitForSecondsRealtime(stageIndex==0 && attempt==0 ? 7 : .5f);
+                if(death.IsOpened || settlements!=0 || SaveManager.Current.GetInt("DeathCount",0)!=deathCount ||
+                    SaveManager.Current.GetInt("Sapphire",0)!=sapphire || !SaveManager.CurrentRun.enableSave ||
+                    !File.Exists(Path.Combine(SaveData.CommonPath,SaveManager.Binded+"TMP.sav")))throw new Exception("Death settled before choice");
+                Player.GetComponent<PlayerSpawner>().ClientGameOver();yield return null;
+                if(holder.GetComponentsInChildren<UI_MessageBox_YesNo>().Count(bx=>bx.name=="StageRetryBeforeResult")!=1)throw new Exception("Duplicate death prompt");
+                Log("PASS pre-result choice; death count and sapphire unchanged; run save preserved; settlement callbacks zero; first-death automatic restart suppressed");
+                yield return Capture(holder, "stage-before-result-" + stageIndex + "-" + attempt + ".png");
                 if (stageIndex == 0 && attempt == 0) {
                     string checkpointPath = Path.Combine(SaveData.CommonPath, SaveManager.Binded + ".stage-retry");
                     byte[] checkpoint = File.ReadAllBytes(checkpointPath);
                     try {
                         File.WriteAllText(checkpointPath, "invalid");
-                        stageMenu.Button.onClick.Invoke();
-                        if (plugin.Busy || !Player.IsDead || !death.IsOpened) throw new Exception("Corrupt snapshot changed session");
-                        Log("PASS corrupt snapshot refused without leaving death screen");
+                        StageRetry.Instance.Retry();
+                        if (plugin.Busy || !Player.IsDead || death.IsOpened) throw new Exception("Corrupt snapshot changed session");
+                        Log("PASS corrupt snapshot refused before settlement; no new game");
                     } finally { File.WriteAllBytes(checkpointPath, checkpoint); }
                 }
-                if (stageMenu.Button.FindSelectableOnRight() != death.treeShopButton.GetComponent<Button>() || death.treeShopButton.GetComponent<Button>().FindSelectableOnLeft() != stageMenu.Button) throw new Exception("Death navigation mismatch");
                 var connection = NetworkServer.localConnection;
-                stageMenu.Button.onClick.Invoke();
-                stageMenu.Button.onClick.Invoke(); // Duplicate clicks must be ignored.
+                choice.yesButton.onClick.Invoke();
+                if(!plugin.Busy)throw new Exception("Retry not started");
+                StageRetry.Instance.Retry(); // Duplicate request must be ignored.
                 end = Time.realtimeSinceStartup + 60;
                 while (plugin.Busy && Time.realtimeSinceStartup < end) yield return null;
                 if (plugin.Busy || !Player || Player.IsDead || !Player.CanMove || Player.currentFloorGuid != head || NetworkServer.localConnection != connection) throw new Exception("Stage restore failed");
@@ -203,8 +213,28 @@ public sealed class StageSmoke : BaseUnityPlugin
                 Log("PASS stage=" + currentStage + " attempt=" + attempt + " firstRoom=" + head + " HP/MP/inventory/money/sapphire restored; same session; alive and movable");
             }
         }
-        Log("PASS all stage retry tests");
+        SwitchManager.SetDestinySwitch("EnableTowntreePortal", true);
+        Player.GetComponent<PlayerSpawner>().NetworksapphireInRun=17;
+        int resultEvents=0;Player.GetComponent<PlayerSpawner>().OnGameOverServerside+=delegate{resultEvents++;};
+        FatalHit();var resultHolder=UIManager.Instance.GetElement<UI_MessageBoxHolder>();UI_MessageBox_YesNo resultChoice=null;
+        end=Time.realtimeSinceStartup+30;
+        while(Time.realtimeSinceStartup<end){resultChoice=resultHolder.GetComponentsInChildren<UI_MessageBox_YesNo>().FirstOrDefault(bx=>bx.name=="StageRetryBeforeResult");if(resultChoice)break;yield return null;}
+        if(!resultChoice)throw new Exception("Result choice missing");
+        resultChoice.noButton.onClick.Invoke();yield return new WaitForSecondsRealtime(3);
+        if(!UIManager.Instance.GetElement<UI_GameOverLabel>().IsOpened || resultEvents!=1 || StageRetry.Instance.AwaitingDecision || SaveManager.CurrentRun.enableSave)
+            throw new Exception("Native result path failed or ran twice");
+        Log("PASS result choice invokes native settlement exactly once");
+        Log("PASS all pre-result stage retry tests");
         Application.Quit(0);
+    }
+
+    private void FatalHit()
+    {
+        var damage=DamageInstance.GetDamage(null,"StageRetryFatalHit",Player.transform.position,4294967295L,100000f,EDamageType.Slice,EDamageFromType.DirectAttack,Vector2.right,0,0f);
+        damage.ignoreDefense=100;
+        var result=Player.ApplyDamage(damage);
+        if(!Player.IsDead)throw new Exception("Fatal attack did not kill: "+result+" hp="+Player.hp);
+        Log("PASS actual lethal ApplyDamage -> native Die callback");
     }
 
     private string InventorySignature()

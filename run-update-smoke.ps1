@@ -23,7 +23,10 @@ if (-not $VerifyApplied) {
     Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.cs' | Where-Object { $_.Name -notlike '*Smoke.cs' } | Copy-Item -Destination $oldFixture
     Copy-Item (Join-Path $PSScriptRoot 'build.ps1') $oldFixture
     $oldPlugin = Join-Path $oldFixture 'PersonalConveniencePlugin.cs'
-    (Get-Content -LiteralPath $oldPlugin -Raw).Replace('1.0.3','1.0.2') | Set-Content -LiteralPath $oldPlugin -Encoding utf8
+    $oldSource = Get-Content -LiteralPath $oldPlugin -Raw
+    $currentVersion = [regex]::Match($oldSource, 'public const string Version = "([0-9.]+)"').Groups[1].Value
+    if (-not $currentVersion) { throw 'Plugin version not found' }
+    $oldSource.Replace($currentVersion,'1.0.2') | Set-Content -LiteralPath $oldPlugin -Encoding utf8
     & (Join-Path $oldFixture 'build.ps1')
     Copy-Item (Join-Path $oldFixture 'dist/SephiriaPersonalConvenience.dll') (Join-Path $runtime 'BepInEx/plugins')
 }

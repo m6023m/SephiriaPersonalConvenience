@@ -48,19 +48,19 @@ public sealed class UpdateSmoke : BaseUnityPlugin
         if(!settings.UpdateBox.gameObject.activeInHierarchy)throw new Exception("Update row absent");
         yield return Capture(options,"updater-options.png");
         if (Environment.GetEnvironmentVariable("UPDATER_EXPECT_LATEST") == "1") {
-            if(typeof(SephiriaDicePreview.PersonalConveniencePlugin).Assembly.GetName().Version.ToString()!="1.0.3.0")throw new Exception("Preloader did not update plugin");
+            if(typeof(SephiriaDicePreview.PersonalConveniencePlugin).Assembly.GetName().Version.ToString()!=SephiriaDicePreview.PersonalConveniencePlugin.Version+".0")throw new Exception("Preloader did not update plugin");
             settings.UpdateBox.ChangeValue(1);var latestHolder=UIManager.Instance.GetElement<UI_MessageBoxHolder>();
             end=Time.realtimeSinceStartup+50;UI_MessageBox_Yes latest=null;
             while(Time.realtimeSinceStartup<end){latest=latestHolder.GetComponentsInChildren<UI_MessageBox_Yes>().FirstOrDefault();if(latest)break;yield return null;}
-            if(!latest || !latest.GetComponentInChildren<TMPro.TMP_Text>().text.Contains("1.0.3"))throw new Exception("Latest version message absent");
+            if(!latest || !latest.GetComponentInChildren<TMPro.TMP_Text>().text.Contains(SephiriaDicePreview.PersonalConveniencePlugin.Version))throw new Exception("Latest version message absent");
             yield return new WaitForSecondsRealtime(.5f);yield return Capture(latestHolder,"updater-latest.png");
-            Log("PASS preloader applied 1.0.3; native options loaded; manual check reports latest; no restart pending");Application.Quit(0);yield break;
+            Log("PASS preloader applied latest release; native options loaded; manual check reports latest; no restart pending");Application.Quit(0);yield break;
         }
         settings.UpdateBox.ChangeValue(1);
         var holder=UIManager.Instance.GetElement<UI_MessageBoxHolder>();UI_MessageBox_YesNo offer=null;
         end=Time.realtimeSinceStartup+50;
         while(Time.realtimeSinceStartup<end){offer=holder.GetComponentsInChildren<UI_MessageBox_YesNo>().FirstOrDefault();if(offer)break;yield return null;}
-        if(!offer || !offer.text.text.Contains("1.0.2") || !offer.text.text.Contains("1.0.3"))throw new Exception("Version offer missing");
+        if(!offer || !offer.text.text.Contains("1.0.2") || !offer.text.text.Contains(SephiriaDicePreview.PersonalConveniencePlugin.Version))throw new Exception("Version offer missing");
         yield return new WaitForSecondsRealtime(.5f);yield return Capture(holder,"updater-offer.png");
         offer.noButton.onClick.Invoke();yield return new WaitForSecondsRealtime(.5f);
         string cache=Path.Combine(BepInEx.Paths.CachePath,"SephiriaPersonalConvenience");
@@ -74,7 +74,7 @@ public sealed class UpdateSmoke : BaseUnityPlugin
         var installed=System.Reflection.AssemblyName.GetAssemblyName(Path.Combine(BepInEx.Paths.PluginPath,"SephiriaPersonalConvenience.dll"));
         if(installed.Version.ToString()!="1.0.2.0")throw new Exception("Running DLL replaced");
         yield return new WaitForSecondsRealtime(1);yield return Capture(holder,"updater-ready.png");
-        Log("PASS real GitHub offer 1.0.2 -> 1.0.3; decline does not stage; accept downloads verified DLL; current DLL remains 1.0.2; restart pending");
+        Log("PASS real GitHub offer 1.0.2 -> latest release; decline does not stage; accept downloads verified DLL; current DLL remains 1.0.2; restart pending");
         Application.Quit(0);
     }
 

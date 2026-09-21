@@ -107,6 +107,12 @@ namespace SephiriaRoomRetry
                 throw new InvalidOperationException("Local session unavailable.");
             if (!CheckpointMatches(slot, floor, seed) || !SaveManager.Load(slot) || !SaveManager.LoadTMP(slot))
                 throw new InvalidOperationException("Checkpoint could not be read.");
+            if (!SaveManager.CurrentRun.GetBool("RunStarted", false) || SaveManager.CurrentRun.GetInt("FloorCount", 0) <= 0 ||
+                !SaveManager.CurrentRun.ContainsKey("CurrentGame") || SaveManager.CurrentRun.GetInt("SavedPlayerCount", 0) <= 0 ||
+                SaveManager.CurrentRun.GetString("LastFloorGuid", "") != floor || SaveManager.CurrentRun.GetInt("Seed", -1) != seed)
+                throw new InvalidOperationException("Incomplete resume data; refusing to start a new game.");
+            var restoredProfile = SaveManager.Current.Copy();
+            var restoredRun = SaveManager.CurrentRun.Copy();
             float began = Time.realtimeSinceStartup;
             GameTimeManager.Instance.ResetTimeScaleTo1();
             // Recreate gameplay objects using the ordinary native spawn/load path.
@@ -121,6 +127,9 @@ namespace SephiriaRoomRetry
                 dungeon.globalItemStatTable.Clear();
                 AccessTools.Method(typeof(HorayNetworkManager), "ClearRunScopedRejoinState").Invoke(manager, null);
                 HorayNetworkManager.serverPlayerIndex = 0;
+                // Old-player teardown must not alter the checkpoint used to spawn the replacement.
+                AccessTools.Field(typeof(SaveManager), "current").SetValue(null, restoredProfile);
+                AccessTools.Field(typeof(SaveManager), "currentRun").SetValue(null, restoredRun);
                 manager.NewGame();
                 manager.OnServerAddPlayer(connection);
             }

@@ -20,3 +20,14 @@ Updater SHA256: 7D3AD4C9BDC92C0A4AAB5427E663BF760E9ACE26C29A5B46ED9372237C73A07A
 Game smoke tests require a separately prepared, muted, save-isolated CombatTestArena runtime; it is not distributed. Build first, then run run-update-smoke.ps1 -Prepared <fixture>, wait for its PASS/exit, and run again with -VerifyApplied. The first phase creates an old-version fixture from this source. Disable other test plugins when switching suites.
 
 Scope limits: not all chapters or multiplayer sessions were exercised. Stage retry is single-player only; pre-installation stage entrance state cannot be recovered. Test shutdown may log native authority/offline-session cleanup errors. Repeated offscreen captures may omit individual canvas layers; the complete native renders were used for layout verification. The preloader protocol itself is not auto-updated; future protocol changes need both installer files again.
+
+
+## v1.0.4 pre-result retry
+
+Baseline: dce11ce80411e1ab3414634aa3dfcdf986f3eba2, fetched before this change. The original game log reported a restore to the recorded stage-head GUID; the exact user-observed fresh-game symptom was not conclusively reproduced. The result-first design was changed as requested instead of treating that log as proof of a correct user experience.
+
+Now intercepts single-player native ClientGameOver before OnGameOverServerside and result UI. The next frame shows a native retry/result choice and pauses. Retry validates saved stage/run identity and player resume data, bypasses settlement and restores the checkpoint. Result executes native game-over once. Old-player teardown cannot mutate the restored save objects used for spawning. No fallback intentionally starts a fresh game on invalid resume data.
+
+Final binary D4990D348C11C4C00666927D856AB9883022DE423979FACA4C7E3E6DC40305B1 tested with actual lethal ApplyDamage (not just ForceDie): two stages x two retries, plus one result choice. Result UI stayed closed, settlement callback count stayed zero, death count/sapphires unchanged, run save present; first-death story was held for more than its normal delay. Same connection, expected stage-head GUID, HP/MP/inventory/money/sapphires and movement restored. Corrupt snapshot refused without settlement or fresh-game transition. Result choice invoked settlement exactly once. Two existing pause-room retries also passed. Native prompt render checked; retry label shortened to avoid wrapping. Other chapters/multiplayer remain untested; multiplayer interception is excluded.
+
+Updater runtime code/protocol is unchanged. Stable 1.0.3 updater binary is reused. Test harness version checks now use the plugin version rather than hard-coding the previous release.

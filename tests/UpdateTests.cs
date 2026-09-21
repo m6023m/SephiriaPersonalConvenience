@@ -30,7 +30,7 @@ class UpdateTests
         string target = Path.Combine(plugins, UpdateCore.FileName);
         File.Copy(old, target);
         string oldHash = UpdateCore.Hash(target);
-        var manifest = new Manifest { schema = 1, version = "1.0.3", filename = UpdateCore.FileName,
+        var manifest = new Manifest { schema = 1, version = System.Reflection.AssemblyName.GetAssemblyName(next).Version.ToString(3), filename = UpdateCore.FileName,
             size = new FileInfo(next).Length, sha256 = UpdateCore.Hash(next) };
         Assert(UpdateCore.ParseVersion("0.10.0") > UpdateCore.ParseVersion("0.9.9"), "numeric version ordering");
         foreach (string invalid in new [] { "0.1", "v0.1.0", "0.1.0-beta", "../0.1.0", "01.1.0", "0.1.0.1" })
@@ -51,7 +51,7 @@ class UpdateTests
         manifest.sha256 = UpdateCore.Hash(next);
         manifest.version = "0.2.0";
         Reject(() => UpdateCore.CommitStage(cache, temporary, manifest), "reject assembly version mismatch");
-        manifest.version = "1.0.3";
+        manifest.version = System.Reflection.AssemblyName.GetAssemblyName(next).Version.ToString(3);
         Assert(!UpdateCore.HasPending(cache) && UpdateCore.Hash(target) == oldHash, "failed downloads preserve installed version");
         UpdateCore.CommitStage(cache, temporary, manifest);
         Assert(UpdateCore.HasPending(cache) && UpdateCore.Hash(target) == oldHash, "staging never replaces running plugin");
