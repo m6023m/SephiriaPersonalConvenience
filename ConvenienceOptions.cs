@@ -10,7 +10,7 @@ namespace SephiriaDicePreview
 {
     public sealed class PreviewOptions : MonoBehaviour
     {
-        public UI_HorizontalSelectionBox Box, ComboBox, RetryBox, UpdateBox;
+        public UI_HorizontalSelectionBox Box, ComboBox, RetryBox, UpdateBox, DamageBox;
         public int TabIndex;
         private UI_TabButton tabButton;
         private UI_TabContent content;
@@ -33,7 +33,9 @@ namespace SephiriaDicePreview
                 ComboBox=Row(template,items,PersonalConveniencePlugin.Instance.ShowComboHighlight,"과일 꼬치 콤보 강조","Fruit skewer combo outline","FruitComboOption");
                 RetryBox.forceNavDown=Box;Box.forceNavUp=RetryBox;Box.forceNavDown=ComboBox;ComboBox.forceNavUp=Box;
                 UpdateBox=UpdateRow(template,items);
-                ComboBox.forceNavDown=UpdateBox;UpdateBox.forceNavUp=ComboBox;
+                DamageBox=Row(template,items,PersonalConveniencePlugin.Instance.ShowDamageDetails,"공격 피해 상세보기","Attack damage details","DamageDetailsOption");
+                DamageBox.transform.SetSiblingIndex(UpdateBox.transform.GetSiblingIndex());
+                ComboBox.forceNavDown=DamageBox;DamageBox.forceNavUp=ComboBox;DamageBox.forceNavDown=UpdateBox;UpdateBox.forceNavUp=DamageBox;
                 content.selectionOnOpened=RetryBox.gameObject;
                 var hint=Instantiate(template.valueText.text,items);hint.name="ConvenienceGuide";
                 foreach(Transform child in hint.transform){child.gameObject.SetActive(false);Destroy(child.gameObject);}

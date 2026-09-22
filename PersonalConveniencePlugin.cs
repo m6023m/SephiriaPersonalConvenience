@@ -7,19 +7,20 @@ using HarmonyLib;
 using Mirror;
 using UnityEngine;
 
-[assembly: System.Reflection.AssemblyVersion("1.0.6.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.0.6.0")]
+[assembly: System.Reflection.AssemblyVersion("1.0.7.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.0.7.0")]
 
 namespace SephiriaDicePreview
 {
-    [BepInPlugin("local.sephiria.personal-convenience", "Sephiria Personal Convenience", "1.0.6")]
+    [BepInPlugin("local.sephiria.personal-convenience", "Sephiria Personal Convenience", "1.0.7")]
     public sealed class PersonalConveniencePlugin : BaseUnityPlugin
     {
-        public const string Version = "1.0.6";
+        public const string Version = "1.0.7";
         public static PersonalConveniencePlugin Instance;
         public ConfigEntry<bool> ShowPreview;
         public ConfigEntry<bool> ShowComboHighlight;
         public ConfigEntry<bool> ShowRoomRetry;
+        public ConfigEntry<bool> ShowDamageDetails;
         public BepInEx.Logging.ManualLogSource Log { get { return Logger; } }
         private void Awake()
         {
@@ -29,6 +30,7 @@ namespace SephiriaDicePreview
             ShowPreview = Config.Bind("Display", "ShowNextRoll", true, "Show the next reward reroll in the game UI.");
             ShowComboHighlight = Config.Bind("Display", "HighlightFruitCombos", true, "Outline items matching the positive fruit-skewer combos selected for this run.");
             ShowRoomRetry = Config.Bind("Display", "ShowRoomRetry", true, "Show retry current room in the pause menu.");
+            ShowDamageDetails = Config.Bind("Display", "ShowDamageDetails", true, "Show damage details on demand in equipment tooltips.");
             gameObject.AddComponent<SephiriaRoomRetry.RoomRetryPlugin>();
             gameObject.AddComponent<SephiriaRoomRetry.StageRetry>();
             new Harmony("local.sephiria.personal-convenience").PatchAll(typeof(PersonalConveniencePlugin).Assembly);
