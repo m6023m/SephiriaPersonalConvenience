@@ -1,4 +1,4 @@
-param([string]$Prepared = 'CombatTestArena/prepared-ddfeb3926fd3483e9c5d0d61884b2f5a')
+param([string]$Prepared = 'CombatTestArena/prepared-ddfeb3926fd3483e9c5d0d61884b2f5a', [switch]$RewardUiOnly)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path $Prepared).Path
 $runtime = Join-Path $root 'runtime'
@@ -27,6 +27,7 @@ $start.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
 foreach ($arg in @('-batchmode','-screen-fullscreen','0','-screen-width','1280','-screen-height','800','-logFile',(Join-Path $root 'dice-unity.log'))) { $start.ArgumentList.Add($arg) }
 $start.Environment['SEPHIRIA_COMBAT_TEST_ROOT'] = $root
 $start.Environment['SEPHIRIA_COMBAT_TEST_MUTE'] = '1'
+if ($RewardUiOnly) { $start.Environment['SEPHIRIA_REWARD_UI_ONLY'] = '1' }
 $process = [Diagnostics.Process]::Start($start)
 @{ProcessId=$process.Id;Root=$root} | ConvertTo-Json | Set-Content (Join-Path $root 'dice-process.json')
 Write-Output "Started isolated dice test PID=$($process.Id)"

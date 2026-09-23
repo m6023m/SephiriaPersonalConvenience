@@ -143,6 +143,59 @@ namespace SephiriaDicePreview
             text.Append("적 고유 방어·내성은 별도");
             return text.ToString();
         }
+        internal double NormalTotal(DamageTooltip.Snapshot damage)
+        {
+            var rechargeSchedules=new Dictionary<int,DpsNumbers.RechargeSchedule>();
+            double total=0;int cycleIndex=-1;
+            foreach(var cycle in Cycles)
+            {
+                cycleIndex++;
+                if(cycle.Unavailable!=null||!DpsNumbers.Finite(cycle.Seconds)||cycle.Seconds<=0)continue;
+                double seconds=cycle.Seconds,contactMultiplier=1;
+                if(cycle.Boomerang!=null)cycle.Boomerang.Calculate(out seconds,out contactMultiplier);
+                if(cycle.RechargeDashPeriod>0)seconds=DpsNumbers.DashReducedCooldown(seconds,cycle.RechargeDashPeriod,cycle.RechargeDashReduction);
+                if(cycle.RechargeAttacks!=null)
+                {
+                    var schedule=cycle.RechargeAccumulates?
+                        DpsNumbers.AdditiveRechargeSchedule(seconds-cycle.RechargeSearch,cycle.RechargeSearch,cycle.RechargeAttackPeriod,cycle.RechargeAttacks,cycle.RechargeAttackReduction):
+                        DpsNumbers.AttackRechargeSchedule(seconds-cycle.RechargeSearch,cycle.RechargeSearch,cycle.RechargeAttackPeriod,cycle.RechargeAttacks,cycle.RechargeAttackReduction);
+                    rechargeSchedules.Add(cycleIndex,schedule);seconds=schedule.MeanSeconds;
+                }
+                if(cycle.BowAmmo>0)
+                {
+                    double ordinary=DpsNumbers.ChargedBowSeconds(cycle.BowAmmo,cycle.BowFireInterval,cycle.BowReload,seconds,false);
+                    double repeated=DpsNumbers.ChargedBowSeconds(cycle.BowAmmo,cycle.BowFireInterval,cycle.BowReload,seconds,true);
+                    seconds=ordinary*(1-cycle.BowRepeatChance)+repeated*cycle.BowRepeatChance;
+                }
+                if(!DpsNumbers.Finite(seconds)||seconds<=0)continue;
+                double rate=cycle.TriggerOffsets==null?1/seconds:DpsNumbers.ProcRate(cycle.TriggerOffsets,seconds,cycle.Cooldown,cycle.Probability,cycle.TriggerCounts);
+                double sum=0;
+                foreach(var term in cycle.Terms)
+                {
+                    if(term.Row<0||term.Row>=damage.Rows.Count||!DpsNumbers.Finite(term.Count)||term.Count<0)continue;
+                    foreach(var hit in damage.Rows[term.Row])
+                    {
+                        int ignore=(hit.Follower!=null?hit.Follower.ArmorIgnore:OwnerArmorIgnore)+term.ProjectileArmorIgnore;
+                        var pair=damage.Evaluate(hit,false,StageArmor,ignore);
+                        sum+=damage.Expected(hit,pair)*term.Count*contactMultiplier;
+                    }
+                }
+                if(cycle.GroundRow>=0&&cycle.GroundRow<damage.Rows.Count&&cycle.TriggerOffsets==null)
+                {
+                    double ticks=DpsNumbers.CoveredSeconds(cycle.Seconds,cycle.GroundStarts,cycle.GroundLengths)/.25;
+                    foreach(var hit in damage.Rows[cycle.GroundRow])
+                        sum+=damage.Expected(hit,damage.Evaluate(hit,false,StageArmor,OwnerArmorIgnore))*ticks;
+                }
+                total+=sum*rate;
+            }
+            foreach(var debuff in damage.Debuffs)
+            {
+                DpsNumbers.RechargeSchedule schedule;
+                rechargeSchedules.TryGetValue(debuff.ApplicationCycleIndex,out schedule);
+                total+=debuff.ExpectedDps(damage,false,schedule);
+            }
+            return DpsNumbers.Finite(total)&&total>0?total:0;
+        }
         private static string Show(double value)
         {
             if(!DpsNumbers.Finite(value)||value<0)throw new InvalidOperationException("Invalid DPS result");

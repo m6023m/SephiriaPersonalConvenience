@@ -22,8 +22,10 @@ namespace SephiriaDicePreview
             foreach(var item in player.Inventory.inventoryMatrix.Values)
             {
                 if(item==null||!item.Charm||!item.Charm.IsEffectEnabled)continue;
-                AddForCharm(result,item.Charm,player,true);
+                AddForCharm(result,item.Charm,player,true,null);
             }
+            var preview=RewardDpsPrediction.PreviewCharm;
+            if(preview)AddForCharm(result,preview,player,true,RewardDpsPrediction.PreviewLevel);
             return result;
         }
 
@@ -32,7 +34,7 @@ namespace SephiriaDicePreview
         internal static List<Addition> ForCharm(Charm_Basic charm,PlayerAvatar player)
         {
             var result=new List<Addition>();
-            AddForCharm(result,charm,player,false);
+            AddForCharm(result,charm,player,false,null);
             return result;
         }
 
@@ -52,15 +54,15 @@ namespace SephiriaDicePreview
             return "장착 효과 피해 포함 · 직접 공격 적중마다 별도 판정";
         }
 
-        private static void AddForCharm(List<Addition> result,Charm_Basic source,PlayerAvatar player,bool connected)
+        private static void AddForCharm(List<Addition> result,Charm_Basic source,PlayerAvatar player,bool connected,int? previewLevel)
         {
-            AddTyphoon(result,source as Charm_TheTyphoonSheetmusic,player,connected);
+            AddTyphoon(result,source as Charm_TheTyphoonSheetmusic,player,connected,previewLevel);
         }
 
-        private static void AddTyphoon(List<Addition> result,Charm_TheTyphoonSheetmusic charm,PlayerAvatar player,bool connected)
+        private static void AddTyphoon(List<Addition> result,Charm_TheTyphoonSheetmusic charm,PlayerAvatar player,bool connected,int? previewLevel)
         {
             if(!charm||charm.damageByLevel==null||charm.damageByLevel.Length==0)return;
-            int index=Math.Max(0,Math.Min(charm.damageByLevel.Length-1,charm.CurrentLevelToIdx()));
+            int index=Math.Max(0,Math.Min(charm.damageByLevel.Length-1,previewLevel.HasValue?charm.LevelToIdx(previewLevel.Value):charm.CurrentLevelToIdx()));
             result.Add(new Addition{
                 Hit=new DamageTooltip.Hit{
                     Raw=charm.damageByLevel[index],

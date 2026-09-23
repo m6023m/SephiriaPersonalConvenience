@@ -38,6 +38,8 @@ namespace SephiriaDicePreview
                 var crown=entry.Value as Charm_IncreaseLastAttackDamage_SwordAndShield;
                 if(crown&&crown.IsEffectEnabled)percent+=crown.damagePercentByLevel[crown.CurrentLevelToIdx()];
             }
+            var preview=RewardDpsPrediction.PreviewCharm as Charm_IncreaseLastAttackDamage_SwordAndShield;
+            if(preview)percent+=preview.damagePercentByLevel.SafeRandomAccess(preview.LevelToIdx(RewardDpsPrediction.PreviewLevel));
             return percent;
         }
         internal static float FinalComboCriticalChance(PlayerAvatar p)
@@ -48,6 +50,8 @@ namespace SephiriaDicePreview
                 var crown=entry.Value as Charm_FinalComboCritical;
                 if(crown&&crown.IsEffectEnabled)chance+=crown.criticalBonusPercentByLevel.SafeRandomAccess(crown.CurrentLevelToIdx());
             }
+            var preview=RewardDpsPrediction.PreviewCharm as Charm_FinalComboCritical;
+            if(preview)chance+=preview.criticalBonusPercentByLevel.SafeRandomAccess(preview.LevelToIdx(RewardDpsPrediction.PreviewLevel));
             return chance;
         }
         internal static void Append(StringBuilder text,WeaponSimple weapon,PlayerAvatar p)

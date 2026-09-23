@@ -10,7 +10,7 @@ namespace SephiriaDicePreview
 {
     public sealed class PreviewOptions : MonoBehaviour
     {
-        public UI_HorizontalSelectionBox Box, ComboBox, RetryBox, UpdateBox, DamageBox;
+        public UI_HorizontalSelectionBox Box, ComboBox, RetryBox, UpdateBox, DamageBox, RewardDpsBox;
         public int TabIndex;
         private UI_TabButton tabButton;
         private UI_TabContent content;
@@ -34,8 +34,10 @@ namespace SephiriaDicePreview
                 RetryBox.forceNavDown=Box;Box.forceNavUp=RetryBox;Box.forceNavDown=ComboBox;ComboBox.forceNavUp=Box;
                 UpdateBox=UpdateRow(template,items);
                 DamageBox=Row(template,items,PersonalConveniencePlugin.Instance.ShowDamageDetails,"공격 피해 상세보기","Attack damage details","DamageDetailsOption");
+                RewardDpsBox=Row(template,items,PersonalConveniencePlugin.Instance.ShowRewardDpsPrediction,"보상 DPS 증가율","Reward DPS increase","RewardDpsOption");
                 DamageBox.transform.SetSiblingIndex(UpdateBox.transform.GetSiblingIndex());
-                ComboBox.forceNavDown=DamageBox;DamageBox.forceNavUp=ComboBox;DamageBox.forceNavDown=UpdateBox;UpdateBox.forceNavUp=DamageBox;
+                RewardDpsBox.transform.SetSiblingIndex(UpdateBox.transform.GetSiblingIndex());
+                ComboBox.forceNavDown=DamageBox;DamageBox.forceNavUp=ComboBox;DamageBox.forceNavDown=RewardDpsBox;RewardDpsBox.forceNavUp=DamageBox;RewardDpsBox.forceNavDown=UpdateBox;UpdateBox.forceNavUp=RewardDpsBox;
                 content.selectionOnOpened=RetryBox.gameObject;
                 var hint=Instantiate(template.valueText.text,items);hint.name="ConvenienceGuide";
                 foreach(Transform child in hint.transform){child.gameObject.SetActive(false);Destroy(child.gameObject);}

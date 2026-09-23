@@ -6,13 +6,14 @@ namespace SephiriaDicePreview
     internal static class ConditionalDamageProfiles
     {
         private static readonly System.Reflection.FieldInfo BeforeAttack=AccessTools.Field(typeof(UnitAvatar),"OnAttackUnitBeforeOperation");
+        private static int PreviewIndex(Charm_Basic charm){return charm.LevelToIdx(RewardDpsPrediction.PreviewLevel);}
         internal static float[] CaptureCriticalChance(UnitAvatar owner,System.Reflection.FieldInfo field,out float direct)
         {
             direct=0;
             if(!owner||owner.IsDead||field==null)return null;
-            var handlers=field.GetValue(owner) as Delegate;if(handlers==null)return null;
+            var handlers=field.GetValue(owner) as Delegate;
             float[] values=null;
-            foreach(var handler in handlers.GetInvocationList())
+            foreach(var handler in handlers==null?new Delegate[0]:handlers.GetInvocationList())
             {
                 var basic=handler.Target as Charm_IncreaseCriticalChance_NormalAttack;
                 if(basic){direct+=basic.criticalBonusPercentByLevel.SafeRandomAccess(basic.CurrentLevelToIdx());continue;}
@@ -23,15 +24,25 @@ namespace SephiriaDicePreview
                 var element=egg?EDamageElementalType.Ice:EDamageElementalType.Lightning;
                 for(int i=0;i<values.Length;i++)if(DamageInstance.IsSameElementalType((EDamageElementalType)i,element))values[i]+=bonus;
             }
+            var preview=RewardDpsPrediction.PreviewCharm;
+            var basicPreview=preview as Charm_IncreaseCriticalChance_NormalAttack;
+            if(basicPreview)direct+=basicPreview.criticalBonusPercentByLevel.SafeRandomAccess(PreviewIndex(basicPreview));
+            var eggPreview=preview as Charm_FrozenEgg;var hornPreview=preview as Charm_KirinHorn;
+            if(eggPreview||hornPreview)
+            {
+                if(values==null)values=new float[Enum.GetValues(typeof(EDamageElementalType)).Length];
+                float bonus=eggPreview?eggPreview.criticalChanceByLevel.SafeRandomAccess(PreviewIndex(eggPreview)):hornPreview.addCriticalByLevel.SafeRandomAccess(PreviewIndex(hornPreview));
+                var element=eggPreview?EDamageElementalType.Ice:EDamageElementalType.Lightning;
+                for(int i=0;i<values.Length;i++)if(DamageInstance.IsSameElementalType((EDamageElementalType)i,element))values[i]+=bonus;
+            }
             return values;
         }
         internal static DamageTooltip.Snapshot.RawStep[] CaptureFrostbiteSteps(UnitAvatar owner,System.Reflection.FieldInfo field)
         {
             if(!owner||owner.IsDead||field==null)return null;
             var callbacks=field.GetValue(owner) as Delegate;
-            if(callbacks==null)return null;
             var steps=new System.Collections.Generic.List<DamageTooltip.Snapshot.RawStep>();
-            foreach(var callback in callbacks.GetInvocationList())
+            foreach(var callback in callbacks==null?new Delegate[0]:callbacks.GetInvocationList())
             {
                 var glove=callback.Target as Charm_WarmGlove;
                 if(!glove||!glove.IsEffectEnabled)continue;
@@ -39,15 +50,21 @@ namespace SephiriaDicePreview
                 for(int i=0;i<elements.Length;i++)elements[i]=DamageInstance.IsSameElementalType((EDamageElementalType)i,EDamageElementalType.Ice);
                 steps.Add(new DamageTooltip.Snapshot.RawStep{Kind=4,Percent=glove.damageBonusByLevel.SafeRandomAccess(glove.CurrentLevelToIdx()),Elements=elements});
             }
+            var preview=RewardDpsPrediction.PreviewCharm as Charm_WarmGlove;
+            if(preview)
+            {
+                var elements=new bool[Enum.GetValues(typeof(EDamageElementalType)).Length];
+                for(int i=0;i<elements.Length;i++)elements[i]=DamageInstance.IsSameElementalType((EDamageElementalType)i,EDamageElementalType.Ice);
+                steps.Add(new DamageTooltip.Snapshot.RawStep{Kind=4,Percent=preview.damageBonusByLevel.SafeRandomAccess(PreviewIndex(preview)),Elements=elements});
+            }
             return steps.ToArray();
         }
         internal static float[] CaptureFrostbite(UnitAvatar owner,System.Reflection.FieldInfo field)
         {
             if(!owner||owner.IsDead||field==null)return null;
             var callbacks=field.GetValue(owner) as Delegate;
-            if(callbacks==null)return null;
             float[] values=null;
-            foreach(var callback in callbacks.GetInvocationList())
+            foreach(var callback in callbacks==null?new Delegate[0]:callbacks.GetInvocationList())
             {
                 var glove=callback.Target as Charm_WarmGlove;
                 if(!glove||!glove.IsEffectEnabled)continue;
@@ -59,6 +76,13 @@ namespace SephiriaDicePreview
                 float factor=1+glove.damageBonusByLevel.SafeRandomAccess(glove.CurrentLevelToIdx())/100f;
                 for(int i=0;i<values.Length;i++)
                     if(DamageInstance.IsSameElementalType((EDamageElementalType)i,EDamageElementalType.Ice))values[i]*=factor;
+            }
+            var preview=RewardDpsPrediction.PreviewCharm as Charm_WarmGlove;
+            if(preview)
+            {
+                if(values==null){values=new float[Enum.GetValues(typeof(EDamageElementalType)).Length];for(int i=0;i<values.Length;i++)values[i]=1;}
+                float factor=1+preview.damageBonusByLevel.SafeRandomAccess(PreviewIndex(preview))/100f;
+                for(int i=0;i<values.Length;i++)if(DamageInstance.IsSameElementalType((EDamageElementalType)i,EDamageElementalType.Ice))values[i]*=factor;
             }
             return values;
         }
@@ -74,10 +98,10 @@ namespace SephiriaDicePreview
             snapshot.WeaponCriticalChance+=directChance;
             snapshot.Frostbite=CaptureFrostbite(player,BeforeAttack);
             var handlers=BeforeAttack==null?null:BeforeAttack.GetValue(player) as Delegate;
-            if(handlers==null||player.IsDead)return;
+            if(player.IsDead)return;
             var steps=new System.Collections.Generic.List<DamageTooltip.Snapshot.RawStep>();
             // Inspect registered effects only; inventory presence alone is not activation.
-            foreach(var handler in handlers.GetInvocationList())
+            foreach(var handler in handlers==null?new Delegate[0]:handlers.GetInvocationList())
             {
                 var bat=handler.Target as Charm_PointedBat;
                 if(bat)
@@ -132,7 +156,35 @@ namespace SephiriaDicePreview
                 var burn=handler.Target as Charm_BurnTargetDamageBonus;
                 if(burn&&burn.IsEffectEnabled)snapshot.Burn+=burn.damageBonusByLevel.SafeRandomAccess(burn.CurrentLevelToIdx())/100f;
             }
+            ApplyPreview(snapshot,steps,RewardDpsPrediction.PreviewCharm);
             snapshot.RawSteps=steps.ToArray();
+        }
+        private static void ApplyPreview(DamageTooltip.Snapshot snapshot,System.Collections.Generic.List<DamageTooltip.Snapshot.RawStep> steps,Charm_Basic preview)
+        {
+            if(!preview)return;
+            var bat=preview as Charm_PointedBat;
+            if(bat)
+            {
+                steps.Add(new DamageTooltip.Snapshot.RawStep{Kind=0,Percent=bat.damageDecreaseRatio,Chance=bat.chance});
+                float factor=1-bat.damageDecreaseRatio/100f;
+                if(bat.chance>=100)snapshot.AlwaysDamageFactor*=factor;
+                else if(bat.chance>0){snapshot.RandomDamageMinimum*=Math.Min(1,factor);snapshot.RandomDamageMaximum*=Math.Max(1,factor);}
+            }
+            var elemental=preview as Charm_Burn;
+            if(elemental)
+            {
+                if(snapshot.ElementCritical==null)snapshot.ElementCritical=new int[Enum.GetValues(typeof(EDamageElementalType)).Length];
+                int amount=elemental.addCriticalDamageByLevel.SafeRandomAccess(PreviewIndex(elemental));
+                for(int i=0;i<snapshot.ElementCritical.Length;i++)if(DamageInstance.IsSameElementalType((EDamageElementalType)i,elemental.targetElementalType))snapshot.ElementCritical[i]+=amount;
+            }
+            var debuffs=preview as Charm_DebuffDamage;
+            if(debuffs){float amount=debuffs.additionalDamage.SafeRandomAccess(PreviewIndex(debuffs));steps.Add(new DamageTooltip.Snapshot.RawStep{Kind=3,Percent=amount});snapshot.OneDebuff*=1+amount/100f;}
+            var close=preview as Charm_TooCloseDamage;
+            if(close){float amount=close.additionalDamagePercentByLevel.SafeRandomAccess(PreviewIndex(close));steps.Add(new DamageTooltip.Snapshot.RawStep{Kind=1,Percent=amount});snapshot.Close*=1+amount/100f;}
+            var first=preview as Charm_FirstAttackBonusDamage;
+            if(first){float amount=first.damageBonusByLevel.SafeRandomAccess(PreviewIndex(first));steps.Add(new DamageTooltip.Snapshot.RawStep{Kind=2,Percent=amount});snapshot.First*=1+amount/100f;}
+            var burn=preview as Charm_BurnTargetDamageBonus;
+            if(burn)snapshot.Burn+=burn.damageBonusByLevel.SafeRandomAccess(PreviewIndex(burn))/100f;
         }
     }
     [HarmonyPatch]

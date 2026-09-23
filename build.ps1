@@ -31,10 +31,12 @@ function Invoke-CachedCompile([string]$Name, [string[]]$Arguments, [string[]]$In
 $referencePaths = @(Get-ChildItem -LiteralPath $managed -Filter '*.dll' | Sort-Object Name | ForEach-Object { $_.FullName })
 $referencePaths += @('BepInEx.dll','0Harmony.dll') | ForEach-Object { Join-Path $GameDir ('BepInEx/core/' + $_) }
 $sources = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.cs' | Where-Object { $_.Name -notlike '*Smoke.cs' -and $_.Name -ne 'UpdaterPatcher.cs' } | Sort-Object Name | ForEach-Object { $_.FullName })
+$thumbAsset = Join-Path $PSScriptRoot 'Assets/thumbs-up.png'
+$thumbLicense = Join-Path $PSScriptRoot 'Assets/FONT-AWESOME-LICENSE.txt'
 $output = Join-Path $dist 'SephiriaPersonalConvenience.dll'
-$arguments = @('/nologo','/nostdlib+','/target:library','/optimize+','/utf8output',('/out:"' + $output + '"')) + @($referencePaths | ForEach-Object { '/reference:"' + $_ + '"' }) + @($sources | ForEach-Object { '"' + $_ + '"' })
+$arguments = @('/nologo','/nostdlib+','/target:library','/optimize+','/utf8output',('/out:"' + $output + '"'),('/resource:"' + $thumbAsset + '",SephiriaPersonalConvenience.Assets.thumbs-up.png'),('/resource:"' + $thumbLicense + '",SephiriaPersonalConvenience.Assets.FONT-AWESOME-LICENSE.txt')) + @($referencePaths | ForEach-Object { '/reference:"' + $_ + '"' }) + @($sources | ForEach-Object { '"' + $_ + '"' })
 # Keep the original response file name for the isolated test compiler.
-Invoke-CachedCompile 'build' $arguments ($sources + $referencePaths) $output
+Invoke-CachedCompile 'build' $arguments ($sources + $referencePaths + @($thumbAsset,$thumbLicense)) $output
 Get-FileHash -LiteralPath $output
 
 $updaterSources = @((Join-Path $PSScriptRoot 'UpdateCore.cs'), (Join-Path $PSScriptRoot 'UpdaterPatcher.cs'))

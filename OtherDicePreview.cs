@@ -59,6 +59,7 @@ namespace SephiriaDicePreview
         private string key;
         private float next;
         private TMP_Text text;
+        private readonly List<UI_WeaponEnhancementButton> weaponCards=new List<UI_WeaponEnhancementButton>();
         private bool failed;
         private void Awake(){miracle=GetComponent<UI_MiraclePanel>();weapon=GetComponent<UI_WeaponEnhancementPanel>();}
         private void OnDisable(){key=null;failed=false;if(PreviewRoot)PreviewRoot.SetActive(false);}
@@ -88,13 +89,41 @@ namespace SephiriaDicePreview
         {
             if(!PreviewRoot){
                 PreviewRoot=new GameObject("NextDicePreview",typeof(RectTransform),typeof(CanvasRenderer),typeof(Image));PreviewRoot.transform.SetParent(transform,false);
-                var rect=(RectTransform)PreviewRoot.transform;rect.anchorMin=new Vector2(.1f,0);rect.anchorMax=new Vector2(miracle?.9f:.8f,0);rect.offsetMin=new Vector2(0,miracle?55:8);rect.offsetMax=new Vector2(0,miracle?87:40);
-                var bg=PreviewRoot.GetComponent<Image>();bg.color=new Color(.08f,.07f,.12f,.94f);bg.raycastTarget=false;
+                var rect=(RectTransform)PreviewRoot.transform;rect.anchorMin=new Vector2(miracle ? .1f : .04f,0);rect.anchorMax=new Vector2(miracle ? .9f : .82f,0);rect.offsetMin=new Vector2(0,miracle?55:8);rect.offsetMax=new Vector2(0,miracle?87:92);
+                var bg=PreviewRoot.GetComponent<Image>();bg.color=miracle?new Color(.08f,.07f,.12f,.94f):Color.clear;bg.raycastTarget=false;
                 var go=new GameObject("Results",typeof(RectTransform),typeof(CanvasRenderer),typeof(TextMeshProUGUI));go.transform.SetParent(PreviewRoot.transform,false);
                 text=go.GetComponent<TextMeshProUGUI>();var template=miracle?miracle.rerollButtonText:weapon.rerollGuideText;text.font=template.font;text.fontSharedMaterial=template.fontSharedMaterial;text.fontSize=11;text.enableAutoSizing=true;text.fontSizeMin=8;text.fontSizeMax=11;text.alignment=TextAlignmentOptions.Center;text.raycastTarget=false;text.textWrappingMode=TextWrappingModes.Normal;
-                rect=(RectTransform)text.transform;rect.anchorMin=Vector2.zero;rect.anchorMax=Vector2.one;rect.offsetMin=new Vector2(6,3);rect.offsetMax=new Vector2(-6,-3);
+                rect=(RectTransform)text.transform;rect.anchorMin=miracle?Vector2.zero:new Vector2(0,.76f);rect.anchorMax=Vector2.one;rect.offsetMin=new Vector2(6,3);rect.offsetMax=new Vector2(-6,-3);
             }
-            text.text="<color=#FFDB94>"+(PreviewOptions.Korean?"다음 주사위 결과 · 미리보기":"Next dice roll · Preview")+"</color>\n"+String.Join("   /   ",names);PreviewRoot.SetActive(true);
+            if(miracle)text.text="<color=#FFDB94>"+(PreviewOptions.Korean?"다음 주사위 결과 · 미리보기":"Next dice roll · Preview")+"</color>\n"+String.Join("   /   ",names);
+            else DrawWeaponCards();
+            PreviewRoot.SetActive(true);
+        }
+        private void DrawWeaponCards()
+        {
+            foreach(var card in weaponCards)if(card){card.gameObject.SetActive(false);Destroy(card.gameObject);}weaponCards.Clear();
+            text.text="<color=#FFDB94>"+(PreviewOptions.Korean?"다음 주사위 결과 · 미리보기":"Next dice roll · Preview")+"</color>";
+            var player=OtherDicePredictor.Field<PlayerAvatar>(weapon,"player");
+            var current=player?player.GetComponent<WeaponControllerSimple>().currentWeapon:null;
+            if(!current||Weapons.Length==0)return;
+            var rootRect=(RectTransform)PreviewRoot.transform;
+            rootRect.anchorMin=new Vector2(.82f,.16f);rootRect.anchorMax=new Vector2(.995f,.9f);rootRect.offsetMin=rootRect.offsetMax=Vector2.zero;
+            var titleRect=(RectTransform)text.transform;
+            titleRect.anchorMin=new Vector2(0,.92f);titleRect.anchorMax=Vector2.one;titleRect.offsetMin=new Vector2(2,1);titleRect.offsetMax=new Vector2(-2,-1);
+            Canvas.ForceUpdateCanvases();
+            float rootWidth=Mathf.Max(1,rootRect.rect.width);
+            for(int i=0;i<Weapons.Length;i++)
+            {
+                var prefab=current is WeaponSimple_Crossbow?(UI_WeaponEnhancementButton)weapon.buttonPrefab_Crossbow:weapon.buttonPrefab;
+                var card=Instantiate(prefab,PreviewRoot.transform);weaponCards.Add(card);card.name="WeaponPreviewCard"+i;
+                card.SetWeaponMethod(weapon,current,Weapons[i]);card.enabled=false;if(card.button)card.button.interactable=false;
+                var group=card.GetComponent<CanvasGroup>()??card.gameObject.AddComponent<CanvasGroup>();group.alpha=.92f;group.interactable=false;group.blocksRaycasts=false;
+                card.effectText.gameObject.SetActive(false);card.nameText.enableAutoSizing=false;card.nameText.fontSize=30;
+                var rect=card.rectTransform;
+                rect.anchorMin=rect.anchorMax=new Vector2(.5f,.8f-i*(.72f/Mathf.Max(1,Weapons.Length-1)));rect.anchoredPosition=Vector2.zero;
+                float scale=Mathf.Min(.34f,(rootWidth-4)/Mathf.Max(1,rect.rect.width));
+                rect.localScale=Vector3.one*Mathf.Max(.2f,scale);
+            }
         }
     }
 }

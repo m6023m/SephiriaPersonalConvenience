@@ -126,6 +126,48 @@ namespace SephiriaDicePreview
             text.Append(Stacks).Append("중첩 · ").Append(Duration.ToString("0.###",CultureInfo.InvariantCulture)).Append("초 · ").Append(ticks.ToString("0",CultureInfo.InvariantCulture)).AppendLine(OnExpiration?"회 만료 피해":"틱");
             return text.ToString();
         }
+        internal double ExpectedDps(DamageTooltip.Snapshot snapshot,bool boss,DpsNumbers.RechargeSchedule recharge=null)
+        {
+            if(Unavailable!=null||!Visible(snapshot.FullConditions))return 0;
+            if(ApplicationCycleIndex>=0&&recharge==null)return 0;
+            double applicationPeriod=ApplicationPeriod;double[] applicationOffsets=ApplicationOffsets;
+            if(recharge!=null&&applicationOffsets!=null)
+            {
+                long size=(long)recharge.Offsets.Length*applicationOffsets.Length;
+                if(size>1000000)return 0;
+                var combined=new double[(int)size];int at=0;
+                foreach(double activation in recharge.Offsets)foreach(double offset in applicationOffsets)combined[at++]=activation+offset;
+                applicationPeriod=recharge.Period;applicationOffsets=combined;
+            }
+            double[] rates=!OnExpiration&&ApplicationChance<0&&applicationPeriod>0&&Interval>0?
+                DpsDebuffs.TickRates(applicationPeriod,applicationOffsets,Duration,Interval,AddedStacks,MaximumStacks,RenewOnApplication,ResetAtMaximum):null;
+            double[] accumulated=OnExpiration&&applicationPeriod>0&&Duration>0?
+                DpsDebuffs.AccumulatedRates(applicationPeriod,applicationOffsets,Duration,AddedStacks,MaximumStacks,RenewOnApplication,
+                    (stack,elapsed)=>new[]{ExpectedScaled(snapshot,false,stack,elapsed/Duration),ExpectedScaled(snapshot,true,stack,elapsed/Duration)}):null;
+            if(OneShotAtMaximum)
+            {
+                if(applicationPeriod<=0||applicationOffsets==null)return 0;
+                double rate=DpsDebuffs.ResetRate(applicationPeriod,applicationOffsets,Duration,AddedStacks,MaximumStacks,RenewOnApplication);
+                var pair=snapshot.Evaluate(snapshot.Rows[Row][0],boss,snapshot.Dps.StageArmor,snapshot.Dps.OwnerArmorIgnore);
+                return snapshot.Expected(snapshot.Rows[Row][0],pair)*rate;
+            }
+            if(accumulated!=null)return accumulated[boss?1:0];
+            if(rates!=null)
+            {
+                double total=0;
+                for(int stack=1;stack<rates.Length;stack++)if(rates[stack]!=0&&Stacks>0)
+                    total+=ExpectedScaled(snapshot,boss,stack,1)*rates[stack];
+                return total;
+            }
+            var damage=snapshot.Evaluate(snapshot.Rows[Row][0],boss,snapshot.Dps.StageArmor,snapshot.Dps.OwnerArmorIgnore);
+            double expected=snapshot.Expected(snapshot.Rows[Row][0],damage);
+            if(ApplicationChance>=0)
+            {
+                double frequency=applicationPeriod>0&&applicationOffsets!=null?applicationOffsets.Length/applicationPeriod:1;
+                return expected*ApplicationChance*frequency;
+            }
+            return Interval>0?expected/Interval:0;
+        }
         private static string Show(double value){return Math.Floor(value).ToString("0",CultureInfo.InvariantCulture);}
         private double ExpectedScaled(DamageTooltip.Snapshot snapshot,bool boss,int stack,double factor)
         {

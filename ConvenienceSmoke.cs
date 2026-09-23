@@ -55,10 +55,29 @@ public sealed class ConvenienceSmoke : BaseUnityPlugin {
    var preview=panel.GetComponent<RewardPreview>();
    if(!preview||!preview.PreviewRoot||!preview.PreviewRoot.activeInHierarchy)throw new Exception("Preview not visible");
    if(Signature(preview.Displayed)!=Signature(Predictor.Next(src,Player)))throw new Exception("Displayed result mismatch");
+   var previewCards=nativeRewards.SelectMany(r=>r.GetComponentsInChildren<Transform>(true)).Where(t=>t.name.StartsWith("NextDicePreviewItem")).ToArray();
+   if(previewCards.Length!=Math.Min(preview.Displayed.Length,nativeRewards.Length))throw new Exception("Overlapped preview card count mismatch");
+   if(previewCards.Any(c=>c.GetComponentInChildren<TMPro.TMP_Text>(true)))throw new Exception("Preview item name was not removed");
+   if(previewCards.Any(c=>((RectTransform)c).offsetMin.x>-19))throw new Exception("Preview item is not exposed on the left");
+   var charmRewards=nativeRewards.Where(r=>ItemDatabase.FindItemById(r.reward.entityID).type==EItemType.Charm).ToArray();
+   foreach(var reward in nativeRewards){var badge=reward.GetComponent<RewardDpsBadge>();if(!badge)throw new Exception("Reward DPS component missing");if(ItemDatabase.FindItemById(reward.reward.entityID).type!=EItemType.Charm&&badge.Eligible)throw new Exception("Non-artifact DPS badge visible");}
+   if(charmRewards.Length>0)
+   {
+    float dpsDeadline=Time.realtimeSinceStartup+20;while(charmRewards.Any(r=>!r.GetComponent<RewardDpsBadge>().Eligible)&&Time.realtimeSinceStartup<dpsDeadline)yield return null;
+    if(charmRewards.Any(r=>!r.GetComponent<RewardDpsBadge>().Eligible))throw new Exception("Artifact DPS prediction timeout");
+    int recommended=charmRewards.Count(r=>r.transform.Find("DpsRecommendation")&&r.transform.Find("DpsRecommendation").gameObject.activeSelf);
+    if(recommended!=1)throw new Exception("Recommendation marker count="+recommended);
+   }
    Capture(panel,"dice-"+type+".png");
    if(type==Sephirite.Type.CHARM){
+    var magicPreview=Resources.LoadAll<ItemEntity>("Item").First(i=>i.type==EItemType.Charm&&i.resourcePrefab&&i.resourcePrefab.GetComponent<Charm_Magic>()&&i.icon);
+    var originalPreview=preview.Displayed[0];
+    preview.Displayed[0]=new SephiriteRewardMetadata(preview.Displayed[0].instanceID,magicPreview.id);
+    AccessTools.Method(typeof(RewardPreview),"Draw").Invoke(preview,null);yield return null;
+    Capture(panel,"dice-magic-preview.png");
+    preview.Displayed[0]=originalPreview;AccessTools.Method(typeof(RewardPreview),"Draw").Invoke(preview,null);yield return null;
     var opts=UIManager.Instance.GetElement<UI_OptionsPanel>();opts.Open();yield return new WaitForSecondsRealtime(.5f);
-        var setting=opts.GetComponent<PreviewOptions>();if(!setting||!setting.Box)throw new Exception("Option missing");
+        var setting=opts.GetComponent<PreviewOptions>();if(!setting||!setting.Box||!setting.RewardDpsBox)throw new Exception("Option missing");
     if(opts.tab.tabButtons.Length!=6||setting.TabIndex!=5)throw new Exception("Tab count/index mismatch");
     var tabButton=opts.tab.tabButtons[5];var pointer=tabButton as UI_TabPointClickableButton;
     if(pointer)pointer.OnPointerClick(new UnityEngine.EventSystems.PointerEventData(UnityEngine.EventSystems.EventSystem.current));else tabButton.GetComponent<Button>().onClick.Invoke();
@@ -86,6 +105,8 @@ public sealed class ConvenienceSmoke : BaseUnityPlugin {
    Log("panel="+panel.IsOpened+" ready="+panel.rewardsGroupInteractable+" rect="+((RectTransform)panel.transform).rect);
    foreach(var t in panel.GetComponentsInChildren<TMPro.TMP_Text>())Log("text="+t.text+" pos="+t.transform.position);
    panel.Close();level.levelUpQueue.Clear();Mirror.NetworkServer.Destroy(src.gameObject);
+   if(type==Sephirite.Type.CHARM&&Environment.GetEnvironmentVariable("SEPHIRIA_REWARD_UI_ONLY")=="1")
+   {Log("PASS REWARD UI COMPLETE");Application.Quit(0);yield break;}
   }
   level.GenerateItem(54321);var general=level.levelUpQueue.Last();general.type=Sephirite.Type.CHARM;general.isSkipOpenAnimation=true;general.GenerateItems(Player.gameObject);
   string generalCategory=general.rewards.SelectMany(r=>ItemDatabase.FindItemById(r.entityID).categories).First();

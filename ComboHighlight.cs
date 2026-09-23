@@ -36,13 +36,15 @@ namespace SephiriaPersonalConvenience
         private UI_NewInventoryIcon shop;
         private int previewEntityId = -1;
         private GameObject border;
+        private static Image frameStyle;
         private float nextCheck;
         public bool Highlighted { get { return border && border.activeInHierarchy; } }
         public static void ForReward(UI_SephiriteRewardElement source)
         {
             var outline = source.GetComponent<ComboOutline>() ?? source.gameObject.AddComponent<ComboOutline>();
             outline.reward = source;
-            outline.Create(source.bgImage ? source.bgImage.rectTransform : source.rectTransform, 1.5f);
+            if(source.categoryFrameImage)frameStyle=source.categoryFrameImage;
+            outline.Create(source.bgImage ? source.bgImage.rectTransform : source.rectTransform, 1.5f,source.categoryFrameImage);
             outline.Refresh();
         }
         public static void ForShop(UI_NewInventoryIcon source)
@@ -50,20 +52,29 @@ namespace SephiriaPersonalConvenience
             if (!source.GetComponentInParent<UI_ShopPanel>()) return;
             var outline = source.GetComponent<ComboOutline>() ?? source.gameObject.AddComponent<ComboOutline>();
             outline.shop = source;
-            outline.Create(source.bgImage ? source.bgImage.rectTransform : source.rectTransform, 1.5f);
+            outline.Create(source.bgImage ? source.bgImage.rectTransform : source.rectTransform, 1.5f,frameStyle);
             outline.Refresh();
         }
         public static void ForPreview(GameObject card, int entityId)
         {
             var outline = card.AddComponent<ComboOutline>(); outline.previewEntityId = entityId;
-            outline.Create((RectTransform)card.transform, 1f); outline.Refresh();
+            outline.Create((RectTransform)card.transform, 1f,frameStyle); outline.Refresh();
         }
-        private void Create(RectTransform target, float width)
+        private void Create(RectTransform target, float width,Image style)
         {
             if(border) return;
-            border = new GameObject("FruitComboOutline", typeof(RectTransform), typeof(LayoutElement));
+            border = new GameObject("FruitComboOutline", typeof(RectTransform), typeof(LayoutElement),typeof(CanvasRenderer),typeof(Image));
             border.transform.SetParent(target,false);border.GetComponent<LayoutElement>().ignoreLayout=true;
             var rect=(RectTransform)border.transform;rect.anchorMin=Vector2.zero;rect.anchorMax=Vector2.one;
+            rect.offsetMin=Vector2.zero;rect.offsetMax=Vector2.zero;
+            var frame=border.GetComponent<Image>();frame.raycastTarget=false;
+            if(style&&style.sprite)
+            {
+                frame.sprite=style.sprite;frame.type=style.type;frame.material=style.material;frame.preserveAspect=style.preserveAspect;
+                frame.pixelsPerUnitMultiplier=style.pixelsPerUnitMultiplier;frame.color=new Color32(129,230,196,235);
+                return;
+            }
+            frame.enabled=false;
             rect.offsetMin=new Vector2(-1,-1);rect.offsetMax=new Vector2(1,1);
             Edge("Top",new Vector2(0,1),Vector2.one,new Vector2(0,-width),Vector2.zero);
             Edge("Bottom",Vector2.zero,new Vector2(1,0),Vector2.zero,new Vector2(0,width));

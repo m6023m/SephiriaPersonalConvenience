@@ -49,6 +49,7 @@ public sealed class OtherSmoke : BaseUnityPlugin {
   }
   PersonalConveniencePlugin.Instance.ShowPreview.Value=false;yield return new WaitForSecondsRealtime(.2f);if(miraclePanel.GetComponent<OtherDicePreview>().PreviewRoot.activeInHierarchy)throw new Exception("Miracle off failed");PersonalConveniencePlugin.Instance.ShowPreview.Value=true;yield return new WaitForSecondsRealtime(.2f);
   miraclePanel.Close();Mirror.NetworkServer.Destroy(go);
+  Player.AddCustomStatUnsafe("EXTRAWEAPONCHOICES",1);
   var baseWeapon=WeaponDatabase.GetBaseWeapons().First(w=>WeaponDatabase.GetWeaponEnhancements(w.id)!=null&&WeaponDatabase.GetWeaponEnhancements(w.id).Count>3);
   Player.GetComponent<WeaponControllerSimple>().EquipWeapon(false,baseWeapon.id);yield return new WaitForSecondsRealtime(1);
   var anvilObject=new GameObject("AnvilTest");anvilObject.SetActive(false);anvilObject.AddComponent<Mirror.NetworkIdentity>();anvilObject.AddComponent<Interactable>();var anvil=anvilObject.AddComponent<Anvil>();anvil.SetRandomID(92841);anvilObject.SetActive(true);Mirror.NetworkServer.Spawn(anvilObject);
@@ -60,10 +61,10 @@ public sealed class OtherSmoke : BaseUnityPlugin {
    var predicted=OtherDicePredictor.WeaponNext(anvil,Player);var again=OtherDicePredictor.WeaponNext(anvil,Player);
    if(!predicted.Select(e=>e.enhanced.id).SequenceEqual(again.Select(e=>e.enhanced.id))||!candidates.SequenceEqual(anvil.candidates.Select(e=>e.enhanced.id))||!current.SequenceEqual(anvil.localWeaponList.Select(e=>e.enhanced.id))||offset!=anvil.localRerollSeedOffset||Player.rerollDice!=10)throw new Exception("Weapon prediction mutated state");
    if(!preview.Weapons.Select(e=>e.enhanced.id).SequenceEqual(predicted.Select(e=>e.enhanced.id)))throw new Exception("Weapon displayed mismatch");
-   Capture(weaponPanel,"dice-weapon.png");weaponPanel.Reroll();yield return new WaitForSecondsRealtime(.4f);
+   Capture(weaponPanel,"dice-weapon-extra-choice.png");weaponPanel.Reroll();yield return new WaitForSecondsRealtime(.4f);
    if(!predicted.Select(e=>e.enhanced.id).SequenceEqual(anvil.localWeaponList.Select(e=>e.enhanced.id)))throw new Exception("Weapon actual mismatch");Log("PASS weapon "+i+" prediction read-only, displayed and actual="+String.Join(",",anvil.localWeaponList.Select(e=>e.enhanced.id.ToString()).ToArray()));
   }
-  PersonalConveniencePlugin.Instance.ShowPreview.Value=false;yield return new WaitForSecondsRealtime(.2f);if(weaponPanel.GetComponent<OtherDicePreview>().PreviewRoot.activeInHierarchy)throw new Exception("Weapon off failed");PersonalConveniencePlugin.Instance.ShowPreview.Value=true;yield return new WaitForSecondsRealtime(.2f);weaponPanel.Close();Mirror.NetworkServer.Destroy(anvilObject);
+  PersonalConveniencePlugin.Instance.ShowPreview.Value=false;yield return new WaitForSecondsRealtime(.2f);if(weaponPanel.GetComponent<OtherDicePreview>().PreviewRoot.activeInHierarchy)throw new Exception("Weapon off failed");PersonalConveniencePlugin.Instance.ShowPreview.Value=true;yield return new WaitForSecondsRealtime(.2f);weaponPanel.Close();Mirror.NetworkServer.Destroy(anvilObject);Player.AddCustomStatUnsafe("EXTRAWEAPONCHOICES",-1);
   Log("PASS COMPLETE");Application.Quit(0);
  }    private void Capture(UIBase panel, string file)
     {

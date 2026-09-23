@@ -12,6 +12,7 @@ namespace SephiriaDicePreview
         internal const string MoveSpeedPercentDeltaKey="__PREVIEW_MOVE_SPEED_PERCENT";
         internal const string MaxHpDeltaKey="__PREVIEW_MAX_HP";
         internal const string FinalHpDeltaKey="__PREVIEW_FINAL_HP";
+        internal const string AmpPrefix="__PREVIEW_AMP:";
         [ThreadStatic] private static DamageStatPreview current;
         private readonly UnitAvatar avatar;
         private readonly Dictionary<string,int> added;
@@ -90,10 +91,12 @@ namespace SephiriaDicePreview
         }
         internal static int Read(UnitAvatar target,string id,int nativeValue)
         {
-            var preview=current;int delta;
-            if(preview==null||preview.avatar!=target||!preview.added.TryGetValue(id,out delta)||delta==0)return nativeValue;
+            var preview=current;int delta,ampDelta;
+            if(preview==null||preview.avatar!=target)return nativeValue;
+            preview.added.TryGetValue(id,out delta);preview.added.TryGetValue(AmpPrefix+id,out ampDelta);
+            if(delta==0&&ampDelta==0)return nativeValue;
             int value=target.GetCustomBaseStatUnsafe(id)+delta;
-            if(value!=0)value=(int)(value*(100+target.GetCustomStatAmp(id))/100f);
+            if(value!=0)value=(int)(value*(100+target.GetCustomStatAmp(id)+ampDelta)/100f);
             return value;
         }
         public void Dispose()
