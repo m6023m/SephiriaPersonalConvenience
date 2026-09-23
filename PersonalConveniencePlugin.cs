@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using BepInEx;
@@ -7,15 +7,15 @@ using HarmonyLib;
 using Mirror;
 using UnityEngine;
 
-[assembly: System.Reflection.AssemblyVersion("1.0.7.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.0.7.0")]
+[assembly: System.Reflection.AssemblyVersion("1.0.8.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.0.8.0")]
 
 namespace SephiriaDicePreview
 {
-    [BepInPlugin("local.sephiria.personal-convenience", "Sephiria Personal Convenience", "1.0.7")]
+    [BepInPlugin("local.sephiria.personal-convenience", "Sephiria Personal Convenience", "1.0.8")]
     public sealed class PersonalConveniencePlugin : BaseUnityPlugin
     {
-        public const string Version = "1.0.7";
+        public const string Version = "1.0.8";
         public static PersonalConveniencePlugin Instance;
         public ConfigEntry<bool> ShowPreview;
         public ConfigEntry<bool> ShowComboHighlight;
@@ -201,9 +201,3 @@ namespace SephiriaDicePreview
         }
     }
 }
-
-
-
-
-
-

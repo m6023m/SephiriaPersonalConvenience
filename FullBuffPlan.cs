@@ -666,17 +666,25 @@ namespace SephiriaDicePreview
                 if(plan.projectedHp.HasValue)stats.SetHealth(plan.projectedHp.Value,plan.projectedMaxHp.Value);
                 var snapshot=DamageTooltip.Capture(delegate
                 {
+                    DamageTooltip.CurrentCapture.FullConditions=true;
                     string description=collect();
                     foreach(var entry in plan.buffs)
                     {
                         var buff=entry.Value;
                         if(buff.Expired||buff.Stack<=0)continue;
+                        if(DamageTooltip.CurrentCapture!=null&&DamageTooltip.CurrentCapture.Dps!=null)
+                        {
+                            MagicDamageProfiles.CaptureBuffDps(buff.Definition,buff.Amplified,p,buff.Duration-buff.Age);
+                            continue;
+                        }
                         string periodic=MagicDamageProfiles.DescribeBuffAttack(buff.Definition,buff.Amplified,p);
                         if(periodic!=null)description+="\n\n사용 후 유지되는 버프의 별도 피해\n"+periodic;
                     }
                     return description;
                 },p);
-                snapshot.Template="현재 사용 가능한 버프 마법·무기 버프를 사용한 뒤의 예상 피해량\n"+(plan.Sources.Count>0?string.Join(" · ",plan.Sources.ToArray()):"사용할 별도 버프 없음")+"\n총 소모 MP "+plan.RequiredMp+" · 사용 후 MP "+p.MP+"\n"+string.Join("\n",plan.Notes.ToArray())+"\n\n"+snapshot.Template;
+                snapshot.FullConditions=true;
+                snapshot.Template="풀 버프 예상 피해량\n"+(plan.Sources.Count>0?string.Join(" · ",plan.Sources.ToArray()):"사용할 별도 버프 없음")+"\n총 소모 MP "+plan.RequiredMp+" · 사용 후 MP "+p.MP+"\n\n"+snapshot.Template;
+                if(snapshot.Dps!=null)snapshot.Dps.BuffSummary=(plan.Sources.Count>0?string.Join(" · ",plan.Sources.ToArray()):"사용할 별도 버프 없음")+"\n총 소모 MP "+plan.RequiredMp+" · 사용 후 MP "+p.MP;
                 return snapshot;
             }
         }

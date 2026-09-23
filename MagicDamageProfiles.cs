@@ -8,6 +8,19 @@ namespace SephiriaDicePreview
     {
         private static readonly System.Reflection.FieldInfo MagicCreated=HarmonyLib.AccessTools.Field(typeof(Charm_Magic),"OnCreateMagic");
         private static readonly System.Reflection.FieldInfo LightningArmorTick=HarmonyLib.AccessTools.Field(typeof(CharacterBuff_LightningArmor),"damageTickTimer");
+        internal static void CaptureBuffDps(CharacterBuff buff,float amplified,PlayerAvatar player,float remaining)
+        {
+            var lightning=buff as CharacterBuff_LightningArmor;
+            var snapshot=DamageTooltip.CurrentCapture;
+            if(!lightning||snapshot==null||snapshot.Dps==null)return;
+            int row=snapshot.Rows.Count;
+            DescribeBuffAttack(buff,amplified,player);
+            var cycle=new DpsSnapshot.Cycle{Name="번개 갑옷 유지 중 DPS",Seconds=((Timer)LightningArmorTick.GetValue(lightning)).time,
+                Condition="범위 내 대상 1명 · 버프가 유지되는 동안 · 무기 공격과 별도"};
+            if(remaining>0&&!float.IsInfinity(remaining))cycle.Condition+=" · 남은 지속 "+Math.Floor(remaining).ToString("0")+"초";
+            for(int index=row;index<snapshot.Rows.Count;index++)cycle.Terms.Add(new DpsSnapshot.Term{Row=index});
+            snapshot.Dps.Cycles.Add(cycle);
+        }
         internal static string DescribeBuffAttack(CharacterBuff buff,float amplified,PlayerAvatar player)
         {
             var lightning=buff as CharacterBuff_LightningArmor;
@@ -15,7 +28,7 @@ namespace SephiriaDicePreview
             // OnUpdate_Server constructs this hit directly: no AP, charm power,
             // LightningDamage scaling, or stack multiplier is applied to its raw value.
             var hit=new DamageTooltip.Hit{Raw=amplified,Element=EDamageElementalType.Lightning,ElementalEffect=true,
-                ExtraCritical=player.GetCustomStat(ECustomStat.MagicCriticalDamageBonus)};
+                Magic=true};
             float interval=((Timer)LightningArmorTick.GetValue(lightning)).time;
             return "번개 갑옷 · 범위 내 대상당 주기 피해: "+DamageTooltip.Hits(player,hit)+
                 "\n발동 간격 "+interval.ToString("0.###")+"초 · 범위 "+lightning.range.ToString("0.##")+
@@ -156,7 +169,7 @@ namespace SephiriaDicePreview
             }
             return false;
         }
-        private static bool BoltMultiShot(Charm_Magic live,out float ratio)
+        internal static bool BoltMultiShot(Charm_Magic live,out float ratio)
         {
             ratio=1;bool applied=false;
             var callbacks=live && MagicCreated!=null?MagicCreated.GetValue(live) as Delegate:null;
@@ -170,15 +183,15 @@ namespace SephiriaDicePreview
             }
             return applied;
         }
-        private static DamageTooltip.Hit BaseHit(PlayerAvatar p,float baseDamage,string stat,float percent,float power,int cost,bool powerOnElement,EDamageElementalType element=EDamageElementalType.Physical)
+        internal static DamageTooltip.Hit BaseHit(PlayerAvatar p,float baseDamage,string stat,float percent,float power,int cost,bool powerOnElement,EDamageElementalType element=EDamageElementalType.Physical)
         {
             return new DamageTooltip.Hit{
                 Raw=baseDamage,Element=element,ResourceAmount=p.GetCustomStat(stat),ResourcePerUnit=percent*.01f*(powerOnElement?power:1),
                 Factors=new[]{1+p.GetCustomStat(ECustomStat.MagicDamageBonus)*.01f,1+p.GetCustomStatUnsafe("MPSKILLDAMAGE")*.01f,cost>0?1+cost/10f*p.GetCustomStatUnsafe("MAGICMP")*.01f:1,power},
-                ExtraCritical=p.GetCustomStat(ECustomStat.MagicCriticalDamageBonus)
+                Magic=true
             };
         }
-        private static void AddFactor(DamageTooltip.Hit hit,float factor)
+        internal static void AddFactor(DamageTooltip.Hit hit,float factor)
         {
             var factors=new System.Collections.Generic.List<float>(hit.Factors);factors.Add(factor);hit.Factors=factors.ToArray();
         }

@@ -29,8 +29,79 @@ namespace SephiriaDicePreview
             }
             // Basic/dash previews must not inherit the preceding special attack's
             // animation MP marker. MP basic attacks are handled above explicitly.
+            if(kind==0&&source is WeaponSimple_Crossbow&&player.GetCustomStatUnsafe("ICECROSSBOWBUFF")>0)return 1;
             if(kind==0||kind==1)return 0;
+            if(kind==2&&great)
+            {
+                if(great.moneyWhirlwind)return 0;
+                float cost=Math.Max(0,great.sweepCost-great.sweepCost*(great.sweepCostBonus/100f));
+                return ReducedSpecialCost(cost,player);
+            }
+            var staff=source as WeaponSimple_QuartterStaff;
+            if(kind==2&&staff)return staff.changedSpecialAttackParameter=="FLAMESPEAR"?0:ReducedSpecialCost(5,player);
+            var crossbow=source as WeaponSimple_Crossbow;
+            if(kind==2&&crossbow)
+            {
+                // Minigun's fully-manual projectile receives the original cost,
+                // even though MP payment is accumulated at the reduced rate.
+                if(crossbow.specialAttackType==WeaponSimple_Crossbow.ESpecialAttackType.Minigun)return Math.Max(0,crossbow.specialAttackCost);
+                return ReducedSpecialCost(crossbow.useMiniDrone?3:crossbow.specialAttackCost,player);
+            }
+            var katana=source as WeaponSimple_Katana;
+            if(kind==2&&katana)
+            {
+                if((katana.sheathActionType==WeaponSimple_Katana.ESheathActionType.Sheath||katana.attackMoveSet==1)&&
+                    (katana.attackMoveSet==1||katana.electricChargeStackCount>=katana.electricChargeIssenCost))return 0;
+                return ReducedSpecialCost(katana.specialAttackCost,player);
+            }
+            var dagger=source as WeaponSimple_Dagger;
+            if(kind==2&&dagger)
+            {
+                if(dagger.currentFury>0&&!dagger.basicAttackFinal)
+                {
+                    // Fury's override MP parameter is literal/keyword/all MP;
+                    // the native getter does not apply special-cost reduction.
+                    if(dagger.overrideFuryAddon)
+                    {
+                        foreach(string parameter in (dagger.changedFuryParameter??"").Split(','))
+                        {
+                            string[] pair=parameter.Split('=');int amount;
+                            if(pair.Length!=2||pair[0]!="MP")continue;
+                            string value=pair[1];
+                            if(value.StartsWith("[")&&value.EndsWith("]"))return Math.Max(0,KeywordDatabase.GetConstValue(value.Substring(1,value.Length-2)));
+                            if(value=="ALL")return Math.Max(0,player.MP);
+                            if(int.TryParse(value,out amount))return Math.Max(0,amount);
+                        }
+                    }
+                    return 0;
+                }
+                return ReducedSpecialCost(dagger.easyParry?4:dagger.freeParry?0:6,player);
+            }
+            var shield=source as WeaponSimple_SwordAndShield;
+            if(kind==2&&shield)
+            {
+                var addon=shield.overrideSweepAddon;
+                // Tempest is the native cost override: it consumes stacks and
+                // explicitly reports zero MP. Other native action replacements
+                // inherit WeaponAddon.UseAttackCost and fall through to the
+                // ordinary shield cost rules, despite replacing fire data.
+                if(addon is WeaponAddonCommon_Tempest)return 0;
+                if(addon&&addon.GetType().GetMethod("UseAttackCost").DeclaringType!=typeof(WeaponAddon))
+                    return source.owner?Math.Max(0,source.owner.mpConsumedAttackTriggerFromAnimationValue):0;
+                // These inputs spend cloud resource or are free, respectively;
+                // neither inherits MP consumed by an earlier weapon action.
+                if(player.GetCustomStatUnsafe("DARKCLOUDSWEEP")>0||shield.isFlameEaterHaetaeEnabled)return 0;
+                float cost=(int)(shield.sweepMpCost-shield.sweepMpCost*(player.GetCustomStat(ECustomStat.SweepCostReduction)/100f));
+                cost=Math.Max(0,cost);
+                cost-=cost*(player.GetCustomStatUnsafe("SPECIALATTACKCOSTREDUCTION")/100f);
+                return Math.Max(0,(int)cost);
+            }
             return source.owner?Math.Max(0,source.owner.mpConsumedAttackTriggerFromAnimationValue):0;
+        }
+        private static int ReducedSpecialCost(float cost,UnitAvatar player)
+        {
+            cost-=cost*(player.GetCustomStatUnsafe("SPECIALATTACKCOSTREDUCTION")/100f);
+            return Math.Max(0,(int)cost);
         }
         internal WeaponBuffPreview(WeaponSimple source,bool useEclipse,bool useTransform,IDictionary<int,int> boneBasicBonuses=null)
         {

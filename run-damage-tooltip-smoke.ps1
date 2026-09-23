@@ -1,4 +1,4 @@
-﻿param([switch]$LayoutOnly, [switch]$UiOnly, [switch]$Audit, [string]$Prepared = 'CombatTestArena/prepared-ddfeb3926fd3483e9c5d0d61884b2f5a', [string]$ValidationPlan)
+﻿param([switch]$DpsAudit, [switch]$DpsWeaponsOnly, [switch]$LayoutOnly, [switch]$UiOnly, [switch]$Audit, [string]$Prepared = 'CombatTestArena/prepared-ddfeb3926fd3483e9c5d0d61884b2f5a', [string]$ValidationPlan)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path $Prepared).Path
 $runtime = Join-Path $root 'runtime'
@@ -7,6 +7,7 @@ if (Get-Process -Name Sephiria -ErrorAction SilentlyContinue | Where-Object { $_
 $testSource = Join-Path $PSScriptRoot 'DamageTooltipSmoke.cs'
 if ($Audit) { $testSource = Join-Path $PSScriptRoot 'AuditDamageSmoke.cs' }
 if ($LayoutOnly) { $testSource = Join-Path $PSScriptRoot 'UiLayoutSmoke.cs' }
+if ($DpsAudit) { $testSource = Join-Path $PSScriptRoot 'DpsAuditSmoke.cs' }
 $runDirectory = $root
 $copiedPlan = $null
 if ($ValidationPlan) {
@@ -46,6 +47,7 @@ foreach ($arg in @('-batchmode','-screen-fullscreen','0','-screen-width','1280',
 $start.Environment['SEPHIRIA_COMBAT_TEST_ROOT'] = $root
 $start.Environment['SEPHIRIA_COMBAT_TEST_MUTE'] = '1'
 if ($UiOnly) { $start.Environment['STAGE_UI_ONLY'] = '1' }
+if ($DpsWeaponsOnly) { $start.Environment['SEPHIRIA_DPS_WEAPONS_ONLY'] = '1' }
 if ($copiedPlan) { $start.Environment['SEPHIRIA_DAMAGE_VALIDATION_PLAN'] = $copiedPlan }
 $process = [Diagnostics.Process]::Start($start)
 @{ProcessId=$process.Id;Root=$root;StartedUtc=$process.StartTime.ToUniversalTime().ToString('o');RunDirectory=$runDirectory;Plan=$copiedPlan;TestDllHash=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'dist/SephiriaPersonalConvenience.dll')).Hash} | ConvertTo-Json | Set-Content (Join-Path $root 'damage-tooltip-process.json')

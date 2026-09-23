@@ -87,7 +87,7 @@ namespace SephiriaDicePreview
             }
             return text!=null;
         }
-        private static float RootBonus(Charm_Basic live,PlayerAvatar p)
+        internal static float RootBonus(Charm_Basic live,PlayerAvatar p)
         {
             return 1+(live && live.netId!=0?live.RequestCharmDamageBonusOnRoot():p.GetCustomStatUnsafe("CHARMDAMAGEBONUS"))/100f;
         }
@@ -190,7 +190,7 @@ namespace SephiriaDicePreview
         private static string Typhoon(Charm_TheTyphoonSheetmusic c,Charm_Basic live,int level,PlayerAvatar p)
         {
             int idx=c.LevelToIdx(level);
-            return NativeStats(c,level)+"\n태풍 악보 번개 추가타 · 일반 / 치명타\n"+DamageTooltip.Hits(p,new DamageTooltip.Hit{Raw=c.damageByLevel.SafeRandomAccess(idx),Element=EDamageElementalType.Lightning,Factors=new[]{RootBonus(live,p)}})+"\n무기 직접 공격이 살아 있는 적에게 적중할 때 1회\n먹구름 공격 속도 +"+c.cloudAttackSpeedByLevel.SafeRandomAccess(idx)+"% · 이 추가타 자체는 무기 공격으로 취급하지 않음";
+            return NativeStats(c,level)+"\n무기 직접 공격이 살아 있는 적에게 적중할 때 번개 추가 피해 1회\n피해 계산식과 DPS는 장착 무기 상세보기에 합산\n먹구름 공격 속도 +"+c.cloudAttackSpeedByLevel.SafeRandomAccess(idx)+"%";
         }
         private static string GrowthParry(Charm_GrowthParry c,Charm_Basic live,int level,PlayerAvatar p)
         {
@@ -200,6 +200,7 @@ namespace SephiriaDicePreview
         }
         private static string FlameMeteor(Charm_FlameGround_Meteor c,Charm_Basic live,int level,PlayerAvatar p)
         {
+            DebuffDamagePreview.CaptureArtifact(c.debuffPrefab,p,"붉은 뱀의 눈",c.countByLevel.SafeRandomAccess(c.LevelToIdx(level)));
             var hit=new DamageTooltip.Hit{Raw=p.GetCustomStat(ECustomStat.FireDamage),Factors=new[]{c.damagesByLevel.SafeRandomAccess(c.LevelToIdx(level))/100f,1+p.GetCustomStatUnsafe("REDSNAKEEYEDAMAGEBONUS")/100f,RootBonus(live,p)}};
             hit.Element=EDamageElementalType.Fire;
             return "화염 운석 1개 · 일반 / 치명타\n"+ProjectileDamageProfiles.Describe(p,hit,c.bulletPrefab,"운석")+"\n발동당 "+c.countByLevel.SafeRandomAccess(c.LevelToIdx(level))+"개 · 기본 재사용 "+c.cooldownTimer.time.ToString("0.###")+"초\n매 운석마다 대상을 다시 탐색하므로 같은 적이 다시 선택될 수 있음\n충돌·폭발·장판은 각 실제 판정만 합산 · 적중 시 화상 부여";

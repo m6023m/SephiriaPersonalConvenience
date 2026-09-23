@@ -6,6 +6,25 @@ namespace SephiriaDicePreview
     internal static class ConditionalDamageProfiles
     {
         private static readonly System.Reflection.FieldInfo BeforeAttack=AccessTools.Field(typeof(UnitAvatar),"OnAttackUnitBeforeOperation");
+        internal static float[] CaptureCriticalChance(UnitAvatar owner,System.Reflection.FieldInfo field,out float direct)
+        {
+            direct=0;
+            if(!owner||owner.IsDead||field==null)return null;
+            var handlers=field.GetValue(owner) as Delegate;if(handlers==null)return null;
+            float[] values=null;
+            foreach(var handler in handlers.GetInvocationList())
+            {
+                var basic=handler.Target as Charm_IncreaseCriticalChance_NormalAttack;
+                if(basic){direct+=basic.criticalBonusPercentByLevel.SafeRandomAccess(basic.CurrentLevelToIdx());continue;}
+                var egg=handler.Target as Charm_FrozenEgg;var horn=handler.Target as Charm_KirinHorn;
+                if(!egg&&!horn)continue;
+                if(values==null)values=new float[Enum.GetValues(typeof(EDamageElementalType)).Length];
+                float bonus=egg?egg.criticalChanceByLevel.SafeRandomAccess(egg.CurrentLevelToIdx()):horn.addCriticalByLevel.SafeRandomAccess(horn.CurrentLevelToIdx());
+                var element=egg?EDamageElementalType.Ice:EDamageElementalType.Lightning;
+                for(int i=0;i<values.Length;i++)if(DamageInstance.IsSameElementalType((EDamageElementalType)i,element))values[i]+=bonus;
+            }
+            return values;
+        }
         internal static DamageTooltip.Snapshot.RawStep[] CaptureFrostbiteSteps(UnitAvatar owner,System.Reflection.FieldInfo field)
         {
             if(!owner||owner.IsDead||field==null)return null;
@@ -50,6 +69,9 @@ namespace SephiriaDicePreview
         }
         internal static void Capture(PlayerAvatar player,DamageTooltip.Snapshot snapshot)
         {
+            float directChance;
+            snapshot.ElementCriticalChance=CaptureCriticalChance(player,BeforeAttack,out directChance);
+            snapshot.WeaponCriticalChance+=directChance;
             snapshot.Frostbite=CaptureFrostbite(player,BeforeAttack);
             var handlers=BeforeAttack==null?null:BeforeAttack.GetValue(player) as Delegate;
             if(handlers==null||player.IsDead)return;

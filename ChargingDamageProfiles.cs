@@ -7,25 +7,34 @@ namespace SephiriaDicePreview
 {
     internal static class ChargingDamageProfiles
     {
-        private struct Payment
+        internal struct Payment
         {
             internal float Multiplier,Flat;
             internal int Spent,Remaining;
         }
-        private static Payment Pay(PlayerAvatar p,int mp,bool repeat)
+        // Native ChargingCharm owns this trigger rule, irrespective of the
+        // attached weapon effect. Share it between per-hit and DPS views.
+        internal static int RepeatPercent(PlayerAvatar player)
+        {
+            int step=KeywordDatabase.GetConstValue("chargingCharmRetriggerByAttackSpeed");
+            int speed=player.GetCustomStatUnsafe("ATTACKSPEED");
+            int bonus=player.GetCustomStatUnsafe("CHARGINGCHARMRETRIGGERBYATTACKSPEED");
+            return step>0&&speed>0&&bonus>0?(int)Math.Min(100,(long)(speed/step)*bonus):0;
+        }
+        internal static Payment Pay(PlayerAvatar p,int mp,bool repeat)
         {
             var value=new Payment{Multiplier=1,Remaining=mp};
             bool infinite=p.GetCustomStatUnsafe("INFINITYMP")>0;
             int bonus=p.GetCustomStatUnsafe("FROSTRELICMPDAMAGE");
             float skill=1+p.GetCustomStatUnsafe("MPSKILLDAMAGE")*.01f;
-            if(bonus>0&&value.Remaining>=4)
+            if(bonus>0&&value.Remaining>=ChargingCharm.MPCost)
             {
-                if(!infinite){value.Remaining-=4;value.Spent+=4;}
+                if(!infinite){value.Remaining-=ChargingCharm.MPCost;value.Spent+=ChargingCharm.MPCost;}
                 value.Multiplier=(1+bonus*.01f)*skill;
             }
-            if(p.GetCustomStatUnsafe("FROSTRELICMPMAXMPDAMAGE")>0&&value.Remaining>=4)
+            if(p.GetCustomStatUnsafe("FROSTRELICMPMAXMPDAMAGE")>0&&value.Remaining>=ChargingCharm.MPCost)
             {
-                if(!infinite){value.Remaining-=4;value.Spent+=4;}
+                if(!infinite){value.Remaining-=ChargingCharm.MPCost;value.Spent+=ChargingCharm.MPCost;}
                 // The native no-count retrigger uses literal 50; the initial cast uses the database.
                 int basis=repeat?50:KeywordDatabase.GetConstValue("PLAYERDEFAULTMP");
                 value.Flat=Math.Max(0,p.MaxMp-basis)*skill;
@@ -53,8 +62,7 @@ namespace SephiriaDicePreview
             append("MP 가득 찬 상태",Math.Max(0,p.MaxMp),false);
             int count=Math.Max(0,1+p.GetCustomStatUnsafe("CHARGINGCHARMAMPLIFY"));
             text.Append("한 번 발동 시 ").Append(count).AppendLine("발 · 발사 간격 0.25초 · 실제 적중한 발만 합산");
-            int step=KeywordDatabase.GetConstValue("chargingCharmRetriggerByAttackSpeed");
-            int chance=step>0&&p.GetCustomStatUnsafe("ATTACKSPEED")>0?p.GetCustomStatUnsafe("ATTACKSPEED")/step*p.GetCustomStatUnsafe("CHARGINGCHARMRETRIGGERBYATTACKSPEED"):0;
+            int chance=RepeatPercent(p);
             if(chance>0)
             {
                 var first=Pay(p,p.MP,false);

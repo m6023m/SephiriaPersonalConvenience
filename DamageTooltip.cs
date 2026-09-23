@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
@@ -42,12 +42,6 @@ namespace SephiriaDicePreview
             if(capturing!=null)return value;
             Cache[key] = value; Calculations++; return value;
         }
-        private static string Attributes(PlayerAvatar p)
-        {
-            return "\n<color=#B9C4D4>현재 속성: 물리 " + p.GetCustomStatUnsafe("PHYSICALDAMAGE") +
-                " · 화염 " + p.GetCustomStatUnsafe("FIREDAMAGE") + "\n냉기 " + p.GetCustomStatUnsafe("ICEDAMAGE") +
-                " · 번개 " + p.GetCustomStatUnsafe("LIGHTNINGDAMAGE") + "</color>";
-        }
         public sealed class Hit
         {
             internal FollowerDamageProfiles.Hit Follower;
@@ -57,6 +51,8 @@ namespace SephiriaDicePreview
             public float ResourceAmount, ResourcePerUnit;
             public float[] Factors;
             public bool Weapon;
+            public bool Magic;
+            public float ExtraCriticalChance;
             public bool ElementalEffect;
             public EDamageElementalType Element=EDamageElementalType.Physical;
             public int ExtraCritical;
@@ -64,6 +60,61 @@ namespace SephiriaDicePreview
             public bool CanCritical=true;
         }
         internal static string DisplayDamage(float value) { return Math.Floor((double)value).ToString("0",System.Globalization.CultureInfo.InvariantCulture); }
+        internal static string ColorText(string text,EDamageElementalType element)
+        {
+            string color=ElementColor(element);
+            return color==null?text:"<color=#"+color+">"+text+"</color>";
+        }
+        internal const string FixedDamageColor="B8B8B8";
+        private static string ElementColor(EDamageElementalType element)
+        {
+            return element==EDamageElementalType.Physical?"FFFFFF":
+                element==EDamageElementalType.Fire?"FFC900":
+                element==EDamageElementalType.Ice?"5F9FFF":
+                element==EDamageElementalType.Lightning?"87FFFF":
+                element==EDamageElementalType.Chaos?"C06CFF":
+                element==EDamageElementalType.IceAndLightning?"73CFFF":
+                element==EDamageElementalType.FireAndIce?"AFB480":
+                element==EDamageElementalType.FireAndLightning?"C3E480":"FFFFFF";
+        }
+        private static string HexText(string text,string color){return "<color=#"+color+">"+text+"</color>";}
+        private static void AddColorWeight(ref double red,ref double green,ref double blue,ref double total,string hex,double weight)
+        {
+            weight=Math.Abs(weight);if(weight<=0)return;
+            red+=Convert.ToInt32(hex.Substring(0,2),16)*weight;
+            green+=Convert.ToInt32(hex.Substring(2,2),16)*weight;
+            blue+=Convert.ToInt32(hex.Substring(4,2),16)*weight;total+=weight;
+        }
+        private static string MixedColor(IEnumerable<KeyValuePair<EDamageElementalType,Pair>> elements,Pair fixedDamage,int mode)
+        {
+            double red=0,green=0,blue=0,total=0;
+            foreach(var entry in elements)
+            {
+                float value=mode==0?entry.Value.Normal:mode==1?entry.Value.Critical:entry.Value.Execution;
+                AddColorWeight(ref red,ref green,ref blue,ref total,ElementColor(entry.Key),value);
+            }
+            float flat=mode==0?fixedDamage.Normal:mode==1?fixedDamage.Critical:fixedDamage.Execution;
+            AddColorWeight(ref red,ref green,ref blue,ref total,FixedDamageColor,flat);
+            if(total<=0)return "FFFFFF";
+            return ((int)Math.Round(red/total)).ToString("X2")+((int)Math.Round(green/total)).ToString("X2")+((int)Math.Round(blue/total)).ToString("X2");
+        }
+        internal static string MixedColor(Dictionary<EDamageElementalType,double> elements,double fixedDamage)
+        {
+            double red=0,green=0,blue=0,total=0;
+            foreach(var entry in elements)AddColorWeight(ref red,ref green,ref blue,ref total,ElementColor(entry.Key),entry.Value);
+            AddColorWeight(ref red,ref green,ref blue,ref total,FixedDamageColor,fixedDamage);
+            if(total<=0)return "FFFFFF";
+            return ((int)Math.Round(red/total)).ToString("X2")+((int)Math.Round(green/total)).ToString("X2")+((int)Math.Round(blue/total)).ToString("X2");
+        }
+        internal static string ColorHex(string text,string color){return HexText(text,color);}
+        internal static string ColorDamage(string text,Hit[] hits)
+        {
+            if(hits==null||hits.Length==0)return text;
+            EDamageElementalType element=DisplayElement(hits[0]);
+            for(int i=1;i<hits.Length;i++)if(DisplayElement(hits[i])!=element)return text;
+            return ColorText(text,element);
+        }
+        private static EDamageElementalType DisplayElement(Hit hit){return hit.Follower!=null?hit.Follower.DisplayElement:hit.Element;}
         public sealed class Pair
         {
             public float Normal, Critical, Execution;
@@ -80,9 +131,15 @@ namespace SephiriaDicePreview
             }
             public RawStep[] RawSteps;
             public string Template;
+            internal DpsSnapshot Dps;
+            internal bool FullConditions;
+            internal readonly List<DebuffDamagePreview> Debuffs=new List<DebuffDamagePreview>();
             public readonly List<Hit[]> Rows=new List<Hit[]>();
             public int All, DashBonus, DashCount, Critical, WeaponCritical, WeaponAmp, Flat;
             public int Elite;
+            public float CriticalChance,WeaponCriticalChance,MagicCriticalChance;
+            public int MagicCriticalDamage;
+            public float[] ElementCriticalChance;
             public bool ExecutionEnabled;
             public int GoldBonus,DebuffBonus,PoisonDebuffBonus;
             public float DefenseBonus;
@@ -92,9 +149,35 @@ namespace SephiriaDicePreview
             public int[] ElementCritical;
             public float[] Frostbite;
             public float AlwaysDamageFactor=1,RandomDamageMinimum=1,RandomDamageMaximum=1;
-            public Pair Evaluate(Hit hit,bool elite=false)
+            public Pair Evaluate(Hit hit,bool elite=false,int? targetDefense=null,int ignoreDefense=0)
             {
-                return EvaluateConditions(hit,1,0,elite);
+                int conditions=FullConditions?(Dps==null?7:5):0;
+                int debuffCount=FullConditions?(Burn!=0?2:1):0;
+                return EvaluateConditions(hit,1,FullConditions?Burn:0,elite,conditions,debuffCount,Dps==null?0:2,targetDefense,ignoreDefense);
+            }
+            internal Pair EvaluateWithoutFlat(Hit hit,bool elite=false,int? targetDefense=null,int ignoreDefense=0)
+            {
+                int conditions=FullConditions?(Dps==null?7:5):0;
+                int debuffCount=FullConditions?(Burn!=0?2:1):0;
+                return EvaluateConditions(hit,1,FullConditions?Burn:0,elite,conditions,debuffCount,Dps==null?0:2,targetDefense,ignoreDefense,0);
+            }
+            internal EDamageElementalType GetDisplayElement(Hit hit){return DisplayElement(hit);}
+            internal double Expected(Hit hit,Pair damage)
+            {
+                if(!hit.CanCritical)return damage.Normal;
+                double chance=CriticalChanceFor(hit);
+                bool execution=hit.Follower!=null?hit.Follower.ExecutionEnabled:ExecutionEnabled;
+                return DpsNumbers.CriticalExpected(damage.Normal,damage.Critical,damage.Execution,chance,execution);
+            }
+            internal double CriticalChanceFor(Hit hit)
+            {
+                if(!hit.CanCritical)return 0;
+                double chance=hit.Follower!=null?hit.Follower.Chance():
+                    CriticalChance+(hit.Weapon?WeaponCriticalChance:hit.Magic?MagicCriticalChance:0);
+                int element=(int)hit.Element;
+                if(hit.Follower==null&&ElementCriticalChance!=null&&element>=0&&element<ElementCriticalChance.Length)chance+=ElementCriticalChance[element];
+                chance+=hit.ExtraCriticalChance;
+                return chance;
             }
             internal static float ApplyRawSteps(float raw,RawStep[] steps,EDamageElementalType elementalType,int conditions,int debuffCount=0,int randomMode=0)
             {
@@ -104,7 +187,13 @@ namespace SephiriaDicePreview
                     switch(step.Kind)
                     {
                         case 0:
-                            if(step.Chance>=100||(step.Chance>0&&((randomMode<0&&step.Percent>0)||(randomMode>0&&step.Percent<0))))raw-=raw*(step.Percent/100f);
+                            if(step.Chance>=100)raw-=raw*(step.Percent/100f);
+                            else if(step.Chance>0)
+                            {
+                                // Mode 2 is the probability-weighted value used by expected DPS.
+                                if(randomMode==2)raw-=raw*(step.Percent/100f)*Mathf.Clamp01(step.Chance/100f);
+                                else if((randomMode<0&&step.Percent>0)||(randomMode==1&&step.Percent<0))raw-=raw*(step.Percent/100f);
+                            }
                             break;
                         case 1:if((conditions&1)!=0)raw+=raw*step.Percent/100f;break;
                         case 2:if((conditions&2)!=0)raw+=raw*step.Percent/100f;break;
@@ -117,9 +206,9 @@ namespace SephiriaDicePreview
                 }
                 return raw;
             }
-            private Pair EvaluateConditions(Hit hit,float rawFactor,float directBonus,bool elite=false,int conditions=0,int debuffCount=0,int randomMode=0)
+            private Pair EvaluateConditions(Hit hit,float rawFactor,float directBonus,bool elite=false,int conditions=0,int debuffCount=0,int randomMode=0,int? targetDefense=null,int ignoreDefense=0,int? flatOverride=null)
             {
-                if(hit.Follower!=null)return hit.Follower.Evaluate(elite,rawFactor,hit.ExtraCritical,hit.CriticalRateMultiplier,hit.CanCritical,hit.ProjectileDamagePercent,conditions);
+                if(hit.Follower!=null)return hit.Follower.Evaluate(elite,rawFactor,hit.ExtraCritical,hit.CriticalRateMultiplier,hit.CanCritical,hit.ProjectileDamagePercent,conditions,targetDefense,ignoreDefense,flatOverride,randomMode);
                 float raw=hit.Raw+hit.ResourceAmount*hit.ResourcePerUnit;
                 if(hit.Factors!=null) foreach(float f in hit.Factors) raw*=f;
                 raw+=hit.AfterFactors;
@@ -140,28 +229,79 @@ namespace SephiriaDicePreview
                 if(hit.Weapon)normal+=normal*directBonus;
                 int critical=50+Critical;
                 if(hit.Weapon) { critical+=WeaponCritical; if(WeaponAmp>0) critical+=(int)(critical*WeaponAmp/100f); }
+                else if(hit.Magic)critical+=MagicCriticalDamage;
                 critical+=hit.ExtraCritical;
                 if(ElementCritical!=null&&(int)hit.Element>=0&&(int)hit.Element<ElementCritical.Length)critical+=ElementCritical[(int)hit.Element];
                 if(hit.CriticalRateMultiplier!=1)critical=(int)Math.Round(critical*hit.CriticalRateMultiplier,MidpointRounding.ToEven);
                 float criticalBonus=hit.CanCritical?critical/100f:0;
-                return new Pair { Normal=FinishOutgoing(normal,DefenseBonus,Flat), Critical=FinishOutgoing(normal+normal*criticalBonus,DefenseBonus,Flat), Execution=FinishOutgoing(normal+normal*criticalBonus*2f,DefenseBonus,Flat) };
+                // Execution doubles only the critical bonus: raw 100, +70% => 240, not 340.
+                int flat=flatOverride??Flat;
+                return new Pair { Normal=FinishOutgoing(normal,DefenseBonus,flat,targetDefense,ignoreDefense), Critical=FinishOutgoing(normal+normal*criticalBonus,DefenseBonus,flat,targetDefense,ignoreDefense), Execution=FinishOutgoing(normal+normal*criticalBonus*2f,DefenseBonus,flat,targetDefense,ignoreDefense) };
+            }
+            internal string RenderRow(Hit[] hits,bool elite=false,int? targetDefense=null,int ignoreDefense=0)
+            {
+                var total=new Pair();var withoutFlat=new Pair();bool execution=true,hasCritical=false,guaranteedCritical=true;
+                var elements=new Dictionary<EDamageElementalType,Pair>();
+                foreach(var hit in hits)
+                {
+                    var value=Evaluate(hit,elite,targetDefense,ignoreDefense);
+                    var baseValue=EvaluateConditions(hit,1,FullConditions?Burn:0,elite,FullConditions?(Dps==null?7:5):0,FullConditions?(Burn!=0?2:1):0,0,targetDefense,ignoreDefense,0);
+                    total.Normal+=value.Normal;total.Critical+=value.Critical;total.Execution+=value.Execution;
+                    withoutFlat.Normal+=baseValue.Normal;withoutFlat.Critical+=baseValue.Critical;withoutFlat.Execution+=baseValue.Execution;
+                    var displayElement=DisplayElement(hit);
+                    Pair element;if(!elements.TryGetValue(displayElement,out element)){element=new Pair();elements.Add(displayElement,element);}
+                    element.Normal+=baseValue.Normal;element.Critical+=baseValue.Critical;element.Execution+=baseValue.Execution;
+                    execution&=hit.Follower!=null?hit.Follower.ExecutionEnabled:ExecutionEnabled;hasCritical|=hit.CanCritical;
+                    guaranteedCritical&=hit.CanCritical&&CriticalChanceFor(hit)>=100;
+                }
+                var fixedDamage=new Pair{Normal=total.Normal-withoutFlat.Normal,Critical=total.Critical-withoutFlat.Critical,Execution=total.Execution-withoutFlat.Execution};
+                bool showFixed=Math.Abs(fixedDamage.Normal)>.0001||Math.Abs(fixedDamage.Critical)>.0001||Math.Abs(fixedDamage.Execution)>.0001;
+                bool mixed=elements.Count>1||showFixed;
+                if(!mixed)
+                {
+                    string simple=guaranteedCritical?"치명타 "+DisplayDamage(total.Critical):hits.Length==1&&!hits[0].CanCritical?DisplayDamage(total.Normal)+" (치명타 없음)":total.ToString();
+                    if(execution&&hasCritical)simple+=" · 처형 "+DisplayDamage(total.Execution);
+                    return ColorDamage(simple,hits);
+                }
+                var parts=new List<string>();
+                foreach(var entry in elements)
+                {
+                    string value=guaranteedCritical?DisplayDamage(entry.Value.Critical):hasCritical?entry.Value.ToString():DisplayDamage(entry.Value.Normal)+" (치명타 없음)";
+                    parts.Add(ColorText(value,entry.Key));
+                }
+                if(showFixed)
+                {
+                    string flat=guaranteedCritical?DisplayDamage(fixedDamage.Critical):hasCritical?fixedDamage.ToString():DisplayDamage(fixedDamage.Normal)+" (치명타 없음)";
+                    parts.Add(HexText(flat,FixedDamageColor));
+                }
+                string combined;
+                if(guaranteedCritical)combined=HexText(DisplayDamage(total.Critical),MixedColor(elements,fixedDamage,1));
+                else
+                {
+                    combined=HexText(DisplayDamage(total.Normal),MixedColor(elements,fixedDamage,0));
+                    if(hasCritical)combined+=" / "+HexText(DisplayDamage(total.Critical),MixedColor(elements,fixedDamage,1));
+                    else combined+=" (치명타 없음)";
+                }
+                if(execution&&hasCritical)combined+=" · 처형 "+HexText(DisplayDamage(total.Execution),MixedColor(elements,fixedDamage,2));
+                return (guaranteedCritical?"치명타 ":"")+(parts.Count>0?String.Join(" + ",parts.ToArray())+" = 합계 ":"")+combined;
             }
             private string FormatConditions(Hit hit,float factor,float bonus,bool elite=false,int conditions=0,int debuffCount=0)
             {
                 var pair=EvaluateConditions(hit,factor,bonus,elite,conditions,debuffCount);
                 bool execution=hit.Follower!=null?hit.Follower.ExecutionEnabled:ExecutionEnabled;
-                return hit.CanCritical?pair.ToString()+(execution?" · 처형 "+DisplayDamage(pair.Execution):""):DisplayDamage(pair.Normal)+" (치명타 없음)";
+                bool guaranteed=hit.CanCritical&&CriticalChanceFor(hit)>=100;
+                string value=guaranteed?"치명타 "+DisplayDamage(pair.Critical)+(execution?" · 처형 "+DisplayDamage(pair.Execution):""):hit.CanCritical?pair.ToString()+(execution?" · 처형 "+DisplayDamage(pair.Execution):""):DisplayDamage(pair.Normal)+" (치명타 없음)";
+                return ColorText(value,hit.Element);
             }
             public string Calculate()
             {
+                if(Dps!=null){Interlocked.Increment(ref Calculations);LastWorkerThread=Thread.CurrentThread.ManagedThreadId;return Dps.Calculate(this);}
                 var renderedRows=new string[Rows.Count];
                 for(int i=0;i<Rows.Count;i++)
                 {
-                    var sum=new Pair();
-                    bool canShowExecution=true,hasCritical=false;
-                    foreach(var hit in Rows[i]) { var value=Evaluate(hit); sum.Normal+=value.Normal;sum.Critical+=value.Critical;sum.Execution+=value.Execution;canShowExecution&=hit.Follower!=null?hit.Follower.ExecutionEnabled:ExecutionEnabled;hasCritical|=hit.CanCritical; }
-                    string rendered=Rows[i].Length==1&&!Rows[i][0].CanCritical?DisplayDamage(sum.Normal)+" (치명타 없음)":sum.ToString();
-                    if(canShowExecution&&hasCritical)rendered+=" · 처형 "+DisplayDamage(sum.Execution);
+                    bool hasCritical=false,guaranteedCritical=true;
+                    foreach(var hit in Rows[i]){hasCritical|=hit.CanCritical;guaranteedCritical&=hit.CanCritical&&CriticalChanceFor(hit)>=100;}
+                    string rendered=RenderRow(Rows[i]);
                     if(RandomDamageMinimum!=1||RandomDamageMaximum!=1)
                     {
                         bool ownAttack=false;
@@ -174,7 +314,9 @@ namespace SephiriaDicePreview
                             minimum.Normal+=low.Normal;minimum.Critical+=low.Critical;
                             maximum.Normal+=high.Normal;maximum.Critical+=high.Critical;
                         }
-                        if(ownAttack)rendered+="\n  확률 피해 보정 최소: "+(hasCritical?minimum.ToString():DisplayDamage(minimum.Normal))+"\n  확률 피해 보정 최대: "+(hasCritical?maximum.ToString():DisplayDamage(maximum.Normal))+"\n  각 타격에서 개별 발동 · 다른 대상 조건 미적용";
+                        string minimumText=guaranteedCritical?"치명타 "+DisplayDamage(minimum.Critical):hasCritical?minimum.ToString():DisplayDamage(minimum.Normal);
+                        string maximumText=guaranteedCritical?"치명타 "+DisplayDamage(maximum.Critical):hasCritical?maximum.ToString():DisplayDamage(maximum.Normal);
+                        if(ownAttack)rendered+="\n  확률 피해 보정 최소: "+ColorDamage(minimumText,Rows[i])+"\n  확률 피해 보정 최대: "+ColorDamage(maximumText,Rows[i])+"\n  각 타격에서 개별 발동 · 다른 대상 조건 미적용";
                     }
                     bool hasElite=false;
                     foreach(var hit in Rows[i])
@@ -183,46 +325,15 @@ namespace SephiriaDicePreview
                     }
                     if(hasElite)
                     {
-                        var eliteSum=new Pair();
-                        foreach(var hit in Rows[i])
-                        {
-                            var value=Evaluate(hit,true);eliteSum.Normal+=value.Normal;eliteSum.Critical+=value.Critical;eliteSum.Execution+=value.Execution;
-                        }
-                        rendered+="\n  보스·미니보스: "+(hasCritical?eliteSum.ToString():DisplayDamage(eliteSum.Normal)+" (치명타 없음)");
-                        if(canShowExecution&&hasCritical)rendered+=" · 처형 "+DisplayDamage(eliteSum.Execution);
-                    }
-                    // Full-health applies at each hit's actual resolution, not to every hit in a sum.
-                    if(Rows[i].Length==1&&Rows[i][0].Follower==null)
-                    {
-                        var h=Rows[i][0];
-                        if(Close!=1)rendered+="\n  근거리 조건 충족: "+FormatConditions(h,1,0,false,1);
-                        if(First!=1)rendered+="\n  적 HP 100% (허수아비 제외): "+FormatConditions(h,1,0,false,2);
-                        if(h.Weapon&&Burn!=0)rendered+="\n  화상 대상 (디버프 1개): "+FormatConditions(h,1,Burn,false,0,1);
-                        if(OneDebuff!=1)rendered+="\n  대상 디버프 1개 또는 기절만 적용: "+FormatConditions(h,1,0,false,0,1);
-                        int conditions=(Close!=1?1:0)+(First!=1?1:0)+(h.Weapon&&Burn!=0?1:0)+(OneDebuff!=1?1:0);
-                        if(conditions>1)rendered+="\n  위 조건 모두 충족한 1타: "+FormatConditions(h,1,Burn,false,3,1);
-                        if(hasElite&&conditions>0)rendered+="\n  보스·미니보스 및 위 조건 모두 충족: "+FormatConditions(h,1,Burn,true,3,1);
-                    }
-                    if(Rows[i].Length==1)
-                    {
-                        var h=Rows[i][0];
-                        float frost=h.Follower!=null?h.Follower.FrostbiteFactor:ConditionalDamageProfiles.FrostbiteFactor(Frostbite,h.Element);
-                        if(frost!=1)
-                        {
-                            rendered+="\n  동상 대상·냉기 계열 적중: "+FormatConditions(h,1,0,false,4,1);
-                            if(hasElite)rendered+="\n  동상 대상·보스·미니보스: "+FormatConditions(h,1,0,true,4,1);
-                            if(h.Follower==null&&(Close!=1||First!=1||(h.Weapon&&Burn!=0)))
-                            {
-                                bool burning=h.Weapon&&Burn!=0;
-                                rendered+="\n  근거리·적 HP 100%·동상"+(burning?"·화상":"")+" 조건 충족: "+FormatConditions(h,1,Burn,false,7,burning?2:1);
-                            }
-                        }
+                        rendered+="\n  보스·미니보스: "+RenderRow(Rows[i],true);
                     }
                     renderedRows[i]=rendered;
                 }
                 Interlocked.Increment(ref Calculations);
                 LastWorkerThread=Thread.CurrentThread.ManagedThreadId;
-                return RenderRows(Template,renderedRows);
+                string renderedDetails=RenderRows(Template,renderedRows);
+                foreach(var debuff in Debuffs)if(debuff.Visible(FullConditions))renderedDetails+="\n"+debuff.Render(this,false);
+                return renderedDetails;
             }
             private static string RenderRows(string template,string[] rows)
             {
@@ -251,8 +362,10 @@ namespace SephiriaDicePreview
         public static double MaxCaptureMilliseconds, TotalCaptureMilliseconds;
         public static int CaptureCount;
         private static Snapshot capturing;
-        internal static float FinishOutgoing(float amount,float defenseBonus,int flat)
+        internal static Snapshot CurrentCapture {get{return capturing;}}
+        internal static float FinishOutgoing(float amount,float defenseBonus,int flat,int? targetDefense=null,int ignoreDefense=0)
         {
+            if(targetDefense.HasValue)return DpsNumbers.FinishDamage(amount,defenseBonus,flat,targetDefense.Value,ignoreDefense);
             amount+=amount*defenseBonus;
             return amount>0?Math.Max(1,amount+flat):0;
         }
@@ -261,6 +374,10 @@ namespace SephiriaDicePreview
             var s=new Snapshot { All=p.GetCustomStat(ECustomStat.AllDamageBonus), DashBonus=p.GetCustomStatUnsafe("WEAPONDAMAGEBONUSBYDASHCOUNT"), DashCount=p.GetCustomStatUnsafe("DASHCOUNT"), Critical=p.GetCustomStat(ECustomStat.CriticalDamageBonus), WeaponCritical=p.GetCustomStatUnsafe("WEAPONCRITICALDAMAGE"), WeaponAmp=p.GetCustomStatUnsafe("WEAPONCRITICALDAMAGEAMPLIFY"), Flat=p.GetCustomStatUnsafe("TRUEDAMAGE") };
             s.DebuffBonus=p.GetCustomStatUnsafe("DEBUFFDAMAGE");s.PoisonDebuffBonus=p.GetCustomStatUnsafe("POISONDEBUFFDAMAGEBONUS");
             s.ExecutionEnabled=p.GetCustomStat(ECustomStat.EXECUTION)>0;
+            s.CriticalChance=p.GetCustomStat(ECustomStat.Critical)/100f;
+            s.WeaponCriticalChance=p.GetCustomStatUnsafe("WEAPONCRITICAL")/100f;
+            s.MagicCriticalChance=p.GetCustomStat(ECustomStat.MagicCritical)/100f;
+            s.MagicCriticalDamage=p.GetCustomStat(ECustomStat.MagicCriticalDamageBonus);
             s.Elite=p.GetCustomStatUnsafe("ELITEDAMAGE");
             if(p.GetCustomStatUnsafe("GOLDHAND")>0)
             {
@@ -275,14 +392,7 @@ namespace SephiriaDicePreview
         internal static string Hits(PlayerAvatar p, params Hit[] hits)
         {
             if(capturing!=null) { int idx=capturing.Rows.Count;capturing.Rows.Add(hits);return "{damage:"+idx+"}"; }
-            var s=Stats(p);var sum=new Pair();bool execution=true,hasCritical=false;
-            foreach(var h in hits)
-            {
-                var v=s.Evaluate(h);sum.Normal+=v.Normal;sum.Critical+=v.Critical;sum.Execution+=v.Execution;
-                execution&=h.Follower!=null?h.Follower.ExecutionEnabled:s.ExecutionEnabled;hasCritical|=h.CanCritical;
-            }
-            if(hits.Length==1&&!hits[0].CanCritical)return DisplayDamage(sum.Normal)+" (치명타 없음)";
-            return sum.ToString()+(execution&&hasCritical?" · 처형 "+DisplayDamage(sum.Execution):"");
+            return Stats(p).RenderRow(hits);
         }
         public static string DamagePair(PlayerAvatar p,float raw,bool weapon) { return Hits(p,new Hit {Raw=raw,Weapon=weapon}); }
         public static Snapshot Capture(Func<string> collect,PlayerAvatar p)
@@ -300,12 +410,13 @@ namespace SephiriaDicePreview
             string cached; if(capturing==null && Cache.TryGetValue(key, out cached)) { CacheHits++; return cached; }
             var text = new StringBuilder(Heading.TrimStart());
             ResourceAttacks(text,weapon,p);
-            WeaponAttacks(text, weapon, p, weapon.basicComboAttacks, "평타", 0);
-            WeaponAttacks(text, weapon, p, weapon.dashAttacks, "돌진", 1);
-            WeaponAttacks(text, weapon, p, weapon.specialAttacks, "특수", 2);
+            WeaponInputAttacks(text,weapon,p,weapon.basicComboAttacks,"평타",0);
+            WeaponInputAttacks(text,weapon,p,weapon.dashAttacks,"돌진",1);
+            WeaponInputAttacks(text,weapon,p,weapon.specialAttacks,"특수",2);
             WeaponAdditionalDamageProfiles.Append(text,weapon,p);
-            text.Append("<color=#B9C4D4>기본 동작 1타 · 일반 / 모두 치명타\n조건별 수치는 각 타격에 따로 적용\n합계는 조건 미충족 기준 · 적 방어 적용 전</color>");
-            text.Append(Attributes(p));
+            WeaponDedicatedProfiles.Append(text,weapon,p);
+            DebuffDamagePreview.CaptureWeapon(weapon,p);
+            text.Append("<color=#B9C4D4>기본 동작 1타 · 일반 / 모두 치명타\n적 방어 적용 전</color>");
             return Remember(key, text.ToString());
         }
         public static Hit MagicBladeHit(WeaponSimple_Katana weapon,PlayerAvatar p,int missing)
@@ -357,17 +468,18 @@ namespace SephiriaDicePreview
             var hit=TempestHit(weapon,p,tempest,stack);
             return ProjectileDamageProfiles.DescribeMelee(p,hit,tempest.tempestFireData);
         }
-        private static Hit TempestHit(WeaponSimple weapon,PlayerAvatar p,WeaponAddonCommon_Tempest tempest,int stack)
+        internal static Hit TempestHit(WeaponSimple weapon,PlayerAvatar p,WeaponAddonCommon_Tempest tempest,int stack,NewWeaponFireData selected=null)
         {
-            var hit=SpecialHit(weapon,p,tempest.tempestFireData,0);
+            var fire=selected?selected:tempest.tempestFireData;
+            var hit=SpecialHit(weapon,p,fire,0);
             var factors=new List<float>(hit.Factors);
             // The creation callback replaces defaultDamageRatio with the consumed
             // stack; it does not multiply the prefab's original ratio by it.
-            if(tempest.tempestFireData is NewWeaponFireData_MeleeAttack)
-                ProjectileDamageProfiles.PrepareMelee(hit,tempest.tempestFireData,stack);
+            if(fire is NewWeaponFireData_MeleeAttack)
+                ProjectileDamageProfiles.PrepareMelee(hit,fire,stack);
             else factors.Add(stack);
             hit.ProjectileDamagePercent=(int)(p.MaxMp/50f)*tempest.mpBonusDamage;
-            if(!(tempest.tempestFireData is NewWeaponFireData_MeleeAttack))hit.Factors=factors.ToArray();
+            if(!(fire is NewWeaponFireData_MeleeAttack))hit.Factors=factors.ToArray();
             return hit;
         }
         private static void CloudSlashRange(StringBuilder text,WeaponSimple_Katana weapon,PlayerAvatar p)
@@ -447,7 +559,41 @@ namespace SephiriaDicePreview
                 }
             }
         }
-        private static void WeaponAttacks(StringBuilder text, WeaponSimple weapon, PlayerAvatar p, NewWeaponFireData[] attacks, string label, int kind,bool selected=false)
+        private static void WeaponInputAttacks(StringBuilder text,WeaponSimple weapon,PlayerAvatar player,NewWeaponFireData[] original,string label,int kind)
+        {
+            var attacks=WeaponBuffPreview.Attacks(weapon,original,kind);
+            var dagger=kind==2?weapon as WeaponSimple_Dagger:null;
+            if(dagger)
+            {
+                if(DpsTiming.DaggerPrimaryAvailable(dagger,player))
+                    WeaponTimedAttacks(text,weapon,player,original,label+(dagger.throwDagger?" · 투척 단검":" · 패리"),kind,attacks,DpsTiming.DaggerPrimary(dagger,player));
+                if(DpsTiming.DaggerFuryAvailable(dagger,player))
+                    WeaponTimedAttacks(text,weapon,player,original,label+" · 퓨리",kind,attacks,DpsTiming.DaggerFury(dagger,player));
+                return;
+            }
+            var timing=kind==0?DpsTiming.Basic(weapon,player):kind==1?DpsTiming.Dash(weapon,player):DpsTiming.Special(weapon,player);
+            WeaponTimedAttacks(text,weapon,player,original,label,kind,attacks,timing);
+        }
+        private static void WeaponTimedAttacks(StringBuilder text,WeaponSimple weapon,PlayerAvatar player,NewWeaponFireData[] original,string label,int kind,NewWeaponFireData[] attacks,DpsTiming.Cycle timing)
+        {
+            if(timing.NoDamage)return;
+            if(timing.Unavailable==null&&timing.Attacks.Count>0)
+            {
+                var indices=new List<int>();bool compatible=true;
+                foreach(var attack in timing.Attacks)
+                {
+                    if(attack.Kind!=kind||attack.Index<0||attacks==null||attack.Index>=attacks.Length){compatible=false;break;}
+                    if(!indices.Contains(attack.Index))indices.Add(attack.Index);
+                }
+                if(compatible&&indices.Count>0)
+                {
+                    WeaponAttacks(text,weapon,player,original,label,kind,false,-1,null,false,indices.Count==1,indices);
+                    return;
+                }
+            }
+            WeaponAttacks(text,weapon,player,original,label,kind);
+        }
+        private static void WeaponAttacks(StringBuilder text, WeaponSimple weapon, PlayerAvatar p, NewWeaponFireData[] attacks, string label, int kind,bool selected=false,int requestedIndex=-1,WeaponAttackSample sample=null,bool fullyManual=false,bool suppressIndex=false,List<int> included=null)
         {
             if(!selected)attacks=WeaponBuffPreview.Attacks(weapon,attacks,kind);
             if(!selected&&kind==0)
@@ -455,18 +601,22 @@ namespace SephiriaDicePreview
                 NewWeaponFireData[] alternate;float chance;string variant;
                 if(WeaponBuffPreview.AlternateBasic(weapon,p,attacks,out alternate,out chance,out variant))
                 {
-                    if(chance<100)WeaponAttacks(text,weapon,p,attacks,label+" · 일반 발동 "+(100-chance).ToString("0.###")+"%",kind,true);
-                    WeaponAttacks(text,weapon,p,alternate,label+" · "+variant+" "+chance.ToString("0.###")+"%",kind,true);
+                    if(chance<100)WeaponAttacks(text,weapon,p,attacks,label+" · 일반 발동 "+(100-chance).ToString("0.###")+"%",kind,true,-1,null,false,suppressIndex,included);
+                    WeaponAttacks(text,weapon,p,alternate,label+" · "+variant+" "+chance.ToString("0.###")+"%",kind,true,-1,null,false,suppressIndex,included);
                     return;
                 }
             }
             int last=WeaponBuffPreview.FinalCombo(weapon);
-            int usedMp=WeaponBuffPreview.UsedMp(weapon,kind,p);
+            int usedMp=fullyManual?0:WeaponBuffPreview.UsedMp(weapon,kind,p);
             float finalArtifactPercent=kind==0?WeaponAdditionalDamageProfiles.FinalComboArtifactPercent(p):0;
-            for(int i=0; i<attacks.Length && (kind!=0 || i<=last); i++)
+            float finalCriticalChance=kind==0?WeaponAdditionalDamageProfiles.FinalComboCriticalChance(p):0;
+            for(int i=requestedIndex<0?0:requestedIndex; i<attacks.Length && (requestedIndex>=0?i==requestedIndex:(included!=null||kind!=0||i<=last)); i++)
             {
+                if(included!=null&&!included.Contains(i))continue;
                 var attack=attacks[i]; if(!attack) continue;
-                text.Append(label).Append(attacks.Length > 1 ? " " + (i+1) : "").Append(": ");
+                if(sample!=null){sample.Fire=attack;sample.UsedMp=usedMp;}
+                int shownIndex=included==null?i+1:included.IndexOf(i)+1;
+                text.Append(label).Append(attacks.Length > 1&&!suppressIndex ? " " + shownIndex : "").Append(": ");
                 if (!(attack is NewWeaponFireData_MeleeAttack) && !(attack is NewWeaponFireData_Bullet) && !(attack is NewWeaponFireData_BulletSpread) && !(attack is NewWeaponFireData_BulletBurst) && !(attack is NewWeaponFireData_SpecialProjectile) && !(attack is NewWeaponFireData_Summon))
                 { text.AppendLine("다중/특수 공격 · 조건별 계산 필요"); continue; }
                 object[] args = { p, attack.damageElementalType, attack.relatedStatFormula, EDamageElementalType.Normal };
@@ -479,13 +629,14 @@ namespace SephiriaDicePreview
                 var baseFactors=new List<float>(factors);
                 if(usedMp>0)baseFactors.Insert(2,1+p.GetCustomStatUnsafe("MPSKILLDAMAGE")/100f);
                 baseFactors.Add(attack.CalculateFinalDamageMultiplier(usedMp));
-                if(kind==2 && weapon.owner)baseFactors.Add(1+weapon.GetAdditionalSpecialAttackDamagePercent(i)/100f);
+                if(kind==2 && weapon.owner&&!fullyManual)baseFactors.Add(1+weapon.GetAdditionalSpecialAttackDamagePercent(i)/100f);
                 if(kind==0 && weapon.owner)baseFactors.Add(1+weapon.GetAdditionalBasicAttackDamagePercent(i)/100f);
                 if(kind==0 && (i==last||attack.forceFinalCombo))baseFactors.Add(1+p.GetCustomStatUnsafe("LASTBASICATTACKDAMAGE")/100f);
                 var main=new Hit {Raw=raw,Element=attack.useElementalTypeFromRelatedStatFormula?(EDamageElementalType)args[3]:attack.damageElementalType,Weapon=true,Factors=baseFactors.ToArray()};
                 var summon=attack as NewWeaponFireData_Summon;
                 if(summon)
                 {
+                    if(sample!=null)sample.Hits=new List<Hit>{main};
                     text.AppendLine(FollowerDamageProfiles.WeaponSummon(summon,main,p));
                     continue;
                 }
@@ -504,10 +655,12 @@ namespace SephiriaDicePreview
                 if(kind==1&&i==0&&attack is NewWeaponFireData_MeleeAttack)
                     main.ProjectileDamagePercent+=WeaponAdditionalDamageProfiles.EnhancedKatanaDashPercent(weapon);
                 if(kind==0&&(i==last||attack.forceFinalCombo))main.ProjectileDamagePercent+=finalArtifactPercent;
+                if(kind==0&&(i==last||attack.forceFinalCombo))main.ExtraCriticalChance+=finalCriticalChance;
+                main=ProjectileDamageProfiles.SelectMeleeDamage(main,attack);
                 var hits=new List<Hit>();hits.Add(main);
                 string projectileDescription;
                 bool projectile=ProjectileDamageProfiles.DescribeWeaponFire(p,main,attack,out projectileDescription);
-                text.AppendLine(projectile?projectileDescription:ProjectileDamageProfiles.DescribeMelee(p,main,attack));
+                var extraText=new StringBuilder();
                 foreach(var addon in weapon.addons)
                 {
                     var extra=addon as WeaponAddonCommon_AdditionalElementalDamage;if(!extra)continue;
@@ -523,11 +676,57 @@ namespace SephiriaDicePreview
                     var hit=new Hit {Raw=p.GetCustomStat(extra.statId),Element=extra.elementalType,Factors=extraFactors.ToArray(),ExtraCritical=eclipse&&kind==0?p.GetCustomStatUnsafe("FLAMESWORDCRITICALDAMAGERATE"):0};
                     hits.Add(hit);
                     string element=extra.elementalType==EDamageElementalType.Fire?"화염":extra.elementalType==EDamageElementalType.Ice?"냉기":extra.elementalType==EDamageElementalType.Lightning?"번개":"속성";
-                    text.Append("  + ").Append(element).Append(" 추가타: ").AppendLine(Hits(p,hit));
+                    if(projectile)extraText.Append("  + ").Append(element).Append(" 추가타: ").AppendLine(Hits(p,hit));
                 }
-                if(hits.Count>1&&!projectile)text.Append("  합계: ").AppendLine(Hits(p,hits.ToArray()));
-                else if(hits.Count>1)text.AppendLine("  속성 추가타는 별도 판정 · 본타의 폭발·관통·연사 횟수와 구분");
+                int linkedStart=hits.Count;
+                AttackLinkedArtifactDamage.AppendToWeaponAttack(p,hits);
+                if(projectile)for(int linked=linkedStart;linked<hits.Count;linked++)extraText.Append("  + ").AppendLine(Hits(p,hits[linked]));
+                if(sample!=null)sample.Hits=hits;
+                if(!projectile)text.AppendLine(hits.Count>1?ProjectileDamageProfiles.DescribeMelee(p,hits.ToArray(),attack):ProjectileDamageProfiles.DescribeMelee(p,main,attack));
+                else
+                {
+                    text.AppendLine(projectileDescription);
+                    text.Append(extraText);
+                    if(hits.Count>1)text.AppendLine("  속성 추가타는 별도 판정 · 본타의 폭발·관통·연사 횟수와 구분");
+                }
             }
+        }
+        internal sealed class WeaponAttackSample
+        {
+            internal WeaponSimple Weapon;
+            internal NewWeaponFireData Fire;
+            internal int UsedMp,Kind,Index;
+            internal List<Hit> Hits;
+        }
+        internal static WeaponAttackSample CaptureWeaponAttack(WeaponSimple weapon,PlayerAvatar player,int kind,int index,NewWeaponFireData forced=null,bool fullyManual=false)
+        {
+            if(capturing==null)throw new InvalidOperationException("Weapon DPS requires a damage snapshot");
+            if(fullyManual)
+            {
+                var manual=new WeaponAttackSample{Weapon=weapon,Kind=kind,Index=index};
+                if(forced)WeaponAttacks(new StringBuilder(),weapon,player,new[]{forced},"",kind,true,0,manual,true);
+                return manual;
+            }
+            var original=kind==0?weapon.basicComboAttacks:kind==1?weapon.dashAttacks:weapon.specialAttacks;
+            var sample=new WeaponAttackSample{Weapon=weapon,Kind=kind,Index=index};
+            if(original==null||original.Length==0)return sample;
+            // Resolve the animation's raw fire index, including sparse indices
+            // such as staff 10/50, before clamping any replacement fire array.
+            var requested=new NewWeaponFireData[Math.Max(original.Length,index+1)];
+            for(int i=0;i<requested.Length;i++)requested[i]=original[Math.Min(i,original.Length-1)];
+            var selected=WeaponBuffPreview.Attacks(weapon,requested,kind);
+            if(selected==null||selected.Length==0)return sample;
+            var padded=new NewWeaponFireData[Math.Max(selected.Length,index+1)];
+            for(int i=0;i<padded.Length;i++)padded[i]=selected[Math.Min(i,selected.Length-1)];
+            var staff=weapon as WeaponSimple_QuartterStaff;
+            if(staff&&kind==2&&index==10&&!weapon.owner&&!staff.overrideSpecialAttackAddon)
+            {
+                bool enhanced=(bool)AccessTools.Field(typeof(WeaponSimple_QuartterStaff),"isSecondSpecialAttackEnhanced").GetValue(staff);
+                padded[index]=enhanced?staff.secondSpecialAttackEnhancedFireData:staff.secondSpecialAttackFireData;
+            }
+            if(forced)padded[index]=forced;
+            WeaponAttacks(new StringBuilder(),weapon,player,padded,"",kind,true,index,sample);
+            return sample;
         }
         public static string ArtifactText(ItemEntity entity, Charm_Basic live, int level, PlayerAvatar p)
         {
@@ -573,7 +772,7 @@ namespace SephiriaDicePreview
             }
             if(live && !live.IsEffectEnabled)
                 result="<color=#EDB14D>현재 발동 조건 미충족 · 아래 장비 효과는 현재 적용되지 않음</color>\n"+result;
-            return Remember(key,result+Attributes(p));
+            return Remember(key,result);
         }
         internal static void RenderWeapon(UI_WeaponTooltip ui)
         {
@@ -583,7 +782,12 @@ namespace SephiriaDicePreview
         internal static void RenderArtifact(UI_CharmTooltip ui,ITooltip data,int offset)
         {
             var view=ui.GetComponent<DamageTooltipView>()??ui.gameObject.AddComponent<DamageTooltipView>();
-            view.Bind(ui,(TMP_Text)CharmText.GetValue(ui),offset);
+            view.BindArtifact(ui,data,(TMP_Text)CharmText.GetValue(ui),offset);
+        }
+        internal static void RenderCombo(UI_SynergyTooltip ui,SynergyTooltipData data)
+        {
+            var view=ui.GetComponent<DamageTooltipView>()??ui.gameObject.AddComponent<DamageTooltipView>();
+            view.BindCombo(ui,data);
         }
     }
     [HarmonyPatch(typeof(UI_WeaponTooltip),"Open")]
@@ -595,6 +799,15 @@ namespace SephiriaDicePreview
     internal static class ArtifactDamageTooltipPatch
     {
         private static void Postfix(UI_CharmTooltip __instance, ITooltip data, int virtualLevelOffset) { try { DamageTooltip.RenderArtifact(__instance,data,virtualLevelOffset); } catch(Exception e) { Debug.LogWarning("Artifact damage tooltip: "+e.Message); } }
+    }
+    [HarmonyPatch(typeof(UI_SynergyTooltip),"Open")]
+    internal static class ComboDamageTooltipPatch
+    {
+        private static void Postfix(UI_SynergyTooltip __instance,ITooltip data)
+        {
+            var combo=data as SynergyTooltipData;
+            if(combo!=null)try { DamageTooltip.RenderCombo(__instance,combo); } catch(Exception e) { Debug.LogWarning("Combo damage tooltip: "+e.Message); }
+        }
     }
     [HarmonyPatch(typeof(UnitAvatar),"OnCustomStatChanged")]
     internal static class TooltipStatChangedPatch { private static void Postfix(UnitAvatar __instance) { DamageTooltip.Invalidate(__instance); } }

@@ -40,6 +40,16 @@ namespace SephiriaDicePreview
             }
             return percent;
         }
+        internal static float FinalComboCriticalChance(PlayerAvatar p)
+        {
+            float chance=0;
+            if(p.Inventory)foreach(var entry in p.Inventory.charms)
+            {
+                var crown=entry.Value as Charm_FinalComboCritical;
+                if(crown&&crown.IsEffectEnabled)chance+=crown.criticalBonusPercentByLevel.SafeRandomAccess(crown.CurrentLevelToIdx());
+            }
+            return chance;
+        }
         internal static void Append(StringBuilder text,WeaponSimple weapon,PlayerAvatar p)
         {
             foreach(var addon in weapon.addons)
@@ -59,7 +69,7 @@ namespace SephiriaDicePreview
                 var ring=addon as WeaponAddonCommon_BurnRing;
                 if(ring)
                 {
-                    var hit=new DamageTooltip.Hit{Raw=p.GetCustomStatUnsafe(ring.relatedStatUnsafe),Factors=new[]{ring.damagePercent/100f,1+p.GetCustomStat(ECustomStat.WeaponDamageBonus)/100f,1+p.GetCustomStat(ECustomStat.FinalWeaponDamage)/100f,1+p.GetCustomStatUnsafe("BURNDAMAGE")/100f}};
+                    var hit=new DamageTooltip.Hit{Raw=p.GetCustomStatUnsafe(ring.relatedStatUnsafe),Element=ring.elementalType,Factors=new[]{ring.damagePercent/100f,1+p.GetCustomStat(ECustomStat.WeaponDamageBonus)/100f,1+p.GetCustomStat(ECustomStat.FinalWeaponDamage)/100f,1+p.GetCustomStatUnsafe("BURNDAMAGE")/100f}};
                     text.Append("화염 고리 범위 내 대상 1명·1틱: ").AppendLine(DamageTooltip.Hits(p,hit));
                     float speed=1+p.GetCustomStatUnsafe("BURNSPEED")/100f;
                     if(speed>0)text.Append("판정 간격 ").Append((ring.burnRingTickTimer.time/speed).ToString("0.###")).Append("초 · 지속 ").Append(ring.burnRingDuration.ToString("0.###")).AppendLine("초");
@@ -74,23 +84,60 @@ namespace SephiriaDicePreview
                 }
             }
         }
+        internal static int ShieldChargeStacks(WeaponSimple_SwordAndShield shield)
+        {
+            if(!shield.chargedSweep_New)return 0;
+            var snapshot=DamageTooltip.CurrentCapture;
+            // Conditional damage belongs to the full-buff view. Capture values
+            // without changing the live weapon's stack or charging timer.
+            return snapshot==null?Math.Max(0,shield.chargedSweep_New_Stack):
+                snapshot.FullConditions?Math.Max(0,KeywordDatabase.GetConstValue("chargedSweepMaxStack")):0;
+        }
+        internal static int? ShieldAnimationOverride(WeaponSimple_SwordAndShield shield)
+        {
+            if(!shield.overrideSweepAddon)return null;
+            int? selected=null;
+            foreach(string parameter in (shield.changedSweepParameter??"").Split(','))
+            {
+                string[] pair=parameter.Split('=');int value;
+                if(pair.Length==2&&pair[0]=="ANIMATION"&&int.TryParse(pair[1],out value))selected=value;
+            }
+            return selected;
+        }
+        internal static bool ShieldGuardReady(WeaponSimple_SwordAndShield shield)
+        {
+            var snapshot=DamageTooltip.CurrentCapture;
+            return snapshot==null?(bool)GuardSweep.GetValue(shield):snapshot.FullConditions&&shield.guardSweep;
+        }
+        private static bool ShieldGuardAtFire(WeaponSimple_SwordAndShield shield)
+        {
+            if(!ShieldGuardReady(shield))return false;
+            // The native input selector can consume the guard buff before the
+            // projectile selector/created callback runs. Preview that state
+            // transition numerically rather than changing the live weapon.
+            if(ShieldAnimationOverride(shield).HasValue)return true;
+            var player=DamageTooltip.Player;
+            if((player&&player.GetCustomStatUnsafe("DARKCLOUDSWEEP")>0)||shield.isFlameEaterHaetaeEnabled)return true;
+            if(shield.shieldThrowing)return false;
+            return shield.guardSweep_New;
+        }
         internal static NewWeaponFireData ShieldSpecialAttack(WeaponSimple_SwordAndShield shield,int index)
         {
             // Same priority as the native selector, using local data only.
             var addon=shield.overrideSweepAddon;
             if(index==0&&addon)return addon.GetFireData("SWEEP",0);
-            bool guard=(bool)GuardSweep.GetValue(shield);
-            if(shield.chargedSweep_New&&shield.chargedSweep_New_Stack>0)
+            bool guard=ShieldGuardAtFire(shield);
+            if(ShieldChargeStacks(shield)>0)
                 return guard?shield.chargedSweepFireData_New_GuardEnhanced:shield.chargedSweepFireData_New;
             if(shield.guardSweep_New&&guard)return shield.guardSweepFireData_New;
             int state=shield.currentAllElementalState;
             if(shield.isAllElementalEnabled&&shield.allElementalSets!=null&&state>=0&&state<shield.allElementalSets.Length)
             {
                 var set=shield.allElementalSets[state];
-                var attack=set==null?null:set.specialAttacks.SafeRandomAccess(index);
+                var attack=set==null||set.specialAttacks==null||set.specialAttacks.Length==0?null:set.specialAttacks.SafeRandomAccess(index);
                 if(attack)return attack;
             }
-            return shield.specialAttacks.SafeRandomAccess(index);
+            return shield.specialAttacks==null||shield.specialAttacks.Length==0?null:shield.specialAttacks.SafeRandomAccess(index);
         }
         internal static void ApplyCreatedAttack(WeaponSimple weapon,NewWeaponFireData attack,int kind,PlayerAvatar p,DamageTooltip.Hit hit)
         {
@@ -119,9 +166,13 @@ namespace SephiriaDicePreview
                 {
                     percent+=p.GetCustomStatUnsafe("FLAMESWORDDAMAGE");
                     hit.ExtraCritical+=p.GetCustomStatUnsafe("FLAMESWORDCRITICALDAMAGERATE");
+                    hit.ExtraCriticalChance+=p.GetCustomStatUnsafe("FLAMESWORDCRITICAL");
                 }
             }
             var shield=weapon as WeaponSimple_SwordAndShield;
+            var great=weapon as WeaponSimple_GreatSword;
+            if(kind==2&&great&&great.rapidWhirlwind)
+                hit.ExtraCriticalChance+=KeywordDatabase.GetConstValue("greatswordRapidWhirlwindCriticalChancePercent");
             if(kind==2&&katana&&katana.isCloudSlashAttack)
                 percent+=katana.cloudSlashDamagePercentPerStack*katana.cloudSlashUsedStacks;
             if(kind==2&&shield)
@@ -129,8 +180,8 @@ namespace SephiriaDicePreview
                 // Read the captured local reference. Prefab previews have no spawned
                 // network identity, and damage calculation must not resolve one.
                 if(shield.overrideSweepAddon)percent+=SweepStatBonus(shield.changedSweepParameter,p);
-                if(shield.guardSweep_New&&(bool)GuardSweep.GetValue(shield))percent+=KeywordDatabase.GetConstValue("guardSweepDamageBonusPercent");
-                if(shield.chargedSweep_New&&shield.HasChargedSweep)percent+=KeywordDatabase.GetConstValue("chargedSweepDamageBonusPercent")*shield.chargedSweep_New_Stack;
+                if(shield.guardSweep_New&&ShieldGuardAtFire(shield))percent+=KeywordDatabase.GetConstValue("guardSweepDamageBonusPercent");
+                percent+=KeywordDatabase.GetConstValue("chargedSweepDamageBonusPercent")*ShieldChargeStacks(shield);
             }
             var special=attack as NewWeaponFireData_SpecialProjectile;
             var crossbow=weapon as WeaponSimple_Crossbow;
@@ -139,7 +190,19 @@ namespace SephiriaDicePreview
                 if(kind==0&&p.GetCustomStatUnsafe("GRENADEATTACK")>0)percent+=p.GetCustomStatUnsafe("ATTACKSPEED");
                 if(kind==2)
                 {
-                    if(crossbow.continueBonus)percent+=crossbow.continueBonusCount*10;
+                    if(crossbow.continueBonus)
+                    {
+                        var snapshot=DamageTooltip.CurrentCapture;
+                        int count=snapshot==null?crossbow.continueBonusCount:snapshot.FullConditions?5:0;
+                        if(count>0&&snapshot!=null&&snapshot.Dps!=null)
+                        {
+                            // A single-shot sustained rotation must beat the
+                            // native inactivity timeout to keep its streak.
+                            var timing=DpsTiming.Special(crossbow,p);
+                            if(timing.Unavailable!=null||timing.Seconds>=crossbow.continueBonusResetTimer.time)count=0;
+                        }
+                        percent+=count*10;
+                    }
                     if(crossbow.useMiniDrone)percent+=Math.Max(0,p.MaxMp-50)*crossbow.miniDroneAddDamagePercentPerMP;
                 }
             }
@@ -166,7 +229,25 @@ namespace SephiriaDicePreview
             hit.AfterFactors+=KeywordDatabase.GetConstValue("crossbowC4BombExplosionDefaultDamage")*defense;
             hit.Weapon=true;
             }
+            ApplyConditional(weapon,p,hit);
             hit.ProjectileDamagePercent+=percent;
+        }
+        internal static void ApplyConditional(WeaponSimple weapon,PlayerAvatar p,DamageTooltip.Hit hit)
+        {
+            if(!weapon||weapon.addons==null||!p||hit==null)return;
+            foreach(var addon in weapon.addons)
+            {
+                var conditional=addon as WeaponAddonCommon_ConditionalStat;
+                if(!conditional)continue;
+                int value=p.GetCustomStatUnsafe(conditional.sourceStatId);
+                bool active=conditional.condition==WeaponAddonCommon_ConditionalStat.ECondition.LOWER_THAN_OR_EQUAL?value<=conditional.sourceStatValue:
+                    conditional.condition==WeaponAddonCommon_ConditionalStat.ECondition.GREATER_THAN_OR_EQUAL?value>=conditional.sourceStatValue:
+                    conditional.condition==WeaponAddonCommon_ConditionalStat.ECondition.EQUAL?value==conditional.sourceStatValue:value!=conditional.sourceStatValue;
+                var snapshot=DamageTooltip.CurrentCapture;
+                if(!active&&(snapshot==null||!snapshot.FullConditions))continue;
+                var factors=new List<float>(hit.Factors??new float[0]);
+                factors.Add(1+conditional.addDamagePercent/100f);hit.Factors=factors.ToArray();
+            }
         }
         private static float DefenseSteps(int defense,string divisorKey,string bonusKey)
         {

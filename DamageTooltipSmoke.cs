@@ -51,9 +51,11 @@ public sealed class DamageTooltipSmoke : BaseUnityPlugin
         yield return Capture(modal,"details-weapon.png");
         Log("PASS gamepad opens details; damage calculated on worker thread "+DamageTooltip.LastWorkerThread);
         string previous=modal.text.text;
+        var resultField=HarmonyLib.AccessTools.Field(typeof(DamageDetailsDialog),"result");
+        string previousResult=(string)resultField.GetValue(dialog);
         Player.AddCustomStat(ECustomStat.PhysicalDamage,1);
-        HarmonyLib.AccessTools.Method(typeof(DamageDetailsDialog),"Request").Invoke(dialog,null);
-        if(!modal.text.text.Contains("계산 중입니다")||!modal.text.text.Contains("평타 1: 20 / 30"))throw new Exception("Previous result not retained while calculating");
+        HarmonyLib.AccessTools.Method(typeof(DamageDetailsDialog),"Request").Invoke(dialog,new object[]{false});
+        if(!modal.text.text.Contains("계산 중입니다")||(string)resultField.GetValue(dialog)!=previousResult)throw new Exception("Previous result not retained while calculating");
         dialog.enabled=false;yield return Capture(modal,"details-recalculating.png");dialog.enabled=true;
         while(dialog.IsCalculating)yield return null;
         if(modal.text.text==previous)throw new Exception("Changed stat result not updated");
@@ -94,6 +96,76 @@ public sealed class DamageTooltipSmoke : BaseUnityPlugin
             Log("PASS native dummy direct="+direct+" crit="+critical+" damage="+hit.damageResult);
         }
         for(int i=0;i<bonusIds.Length;i++)Player.AddCustomStatUnsafe(bonusIds[i],-bonusValues[i]);
+        var typhoonEntity=Resources.LoadAll<ItemEntity>("Item").First(e=>e.resourcePrefab&&e.resourcePrefab.GetComponent<Charm_TheTyphoonSheetmusic>());
+        var typhoonSource=typhoonEntity.resourcePrefab.GetComponent<Charm_TheTyphoonSheetmusic>();
+        var linkedTyphoon=AttackLinkedArtifactDamage.ForCharm(typhoonSource,Player);
+        if(linkedTyphoon.Count!=1||linkedTyphoon[0].Hit.Element!=EDamageElementalType.Lightning||
+            linkedTyphoon[0].Hit.Raw!=typhoonSource.damageByLevel[typhoonSource.CurrentLevelToIdx()])
+            throw new Exception("Central weapon-linked artifact registry did not return Typhoon damage");
+        Log("PASS central weapon-linked artifact registry returns Typhoon per-hit damage");
+        var typhoonArtifact=DamageTooltip.Capture(delegate{return DamageTooltip.ArtifactText(typhoonEntity,null,0,Player);},Player);
+        string typhoonArtifactText=typhoonArtifact.Calculate();
+        if(typhoonArtifact.Rows.Count!=0||!typhoonArtifactText.Contains("장착 무기 상세보기"))
+            throw new Exception("Typhoon damage remained in artifact details instead of routing to the weapon");
+        string typhoonArtifactDps=DamageTooltip.Capture(delegate{return DpsCapture.Artifact(typhoonEntity,null,0,Player);},Player).Calculate();
+        if(typhoonArtifactDps.Contains("연계 추가타 DPS")||!typhoonArtifactDps.Contains("장착 무기 상세보기"))
+            throw new Exception("Typhoon linked DPS remained on the artifact panel");
+        var typhoonBase=DamageTooltip.Capture(delegate{return DamageTooltip.Hits(Player,linkedTyphoon[0].Hit);},Player);
+        float typhoonWithoutFlat=typhoonBase.Evaluate(typhoonBase.Rows[0][0]).Normal;
+        Player.AddCustomStatUnsafe("TRUEDAMAGE",7);
+        var typhoonFlat=DamageTooltip.Capture(delegate{return DamageTooltip.Hits(Player,linkedTyphoon[0].Hit);},Player);
+        float typhoonWithFlat=typhoonFlat.Evaluate(typhoonFlat.Rows[0][0]).Normal;
+        Player.AddCustomStatUnsafe("TRUEDAMAGE",-7);
+        if(Math.Abs((typhoonWithFlat-typhoonWithoutFlat)-7)>0.001f)throw new Exception("True damage did not increase Typhoon proc by 7");
+        string typhoonText=typhoonFlat.Calculate();
+        if(!typhoonText.Contains("<color=#87FFFF>"))throw new Exception("Typhoon lightning display missing");
+        if(!typhoonText.Contains("<color=#"+DamageTooltip.FixedDamageColor+">")||!typhoonText.Contains("= 합계 "))
+            throw new Exception("Fixed damage split or blended total missing");
+        if(!typhoonText.Contains("<color=#A4D6D6>12</color>"))
+            throw new Exception("Fixed/lightning total did not use the expected 5:7 weighted color");
+        var mixed=DamageTooltip.Capture(delegate
+        {
+            return DamageTooltip.Hits(Player,
+                new DamageTooltip.Hit{Raw=5,Element=EDamageElementalType.Physical},
+                new DamageTooltip.Hit{Raw=7,Element=EDamageElementalType.Lightning});
+        },Player).Calculate();
+        if(!mixed.Contains("<color=#FFFFFF>5 / 7</color> + <color=#87FFFF>7 / 10</color> = 합계 ")||
+            !mixed.Contains("<color=#B9FFFF>12</color>"))
+            throw new Exception("Mixed elemental weapon damage did not show components, plus sign, and weighted total");
+        var linkedDps=DamageTooltip.Capture(delegate
+        {
+            var dps=DpsCapture.Start(Player);dps.StageArmor=0;
+            DamageTooltip.CurrentCapture.Flat=3;
+            var cycle=new DpsSnapshot.Cycle{Name="연계 피해 검증",Seconds=1};dps.Cycles.Add(cycle);
+            DpsCapture.Add(cycle,new DamageTooltip.Hit{Raw=10,CanCritical=false},1);
+            DpsCapture.Add(cycle,new DamageTooltip.Hit{Raw=5,Element=EDamageElementalType.Lightning,CanCritical=false},1);
+            return "";
+        },Player).Calculate();
+        if(!linkedDps.Contains(">21</color>"))
+            throw new Exception("Weapon DPS did not include base 10 + fixed 3 and Typhoon 5 + fixed 3");
+        var missSnapshot=new DamageTooltip.Snapshot
+        {
+            RawSteps=new[]{new DamageTooltip.Snapshot.RawStep{Kind=0,Percent=50,Chance=20}},
+            Dps=new DpsSnapshot{StageArmor=0}
+        };
+        missSnapshot.Rows.Add(new[]{new DamageTooltip.Hit{Raw=100,CanCritical=false}});
+        var missCycle=new DpsSnapshot.Cycle{Name="빗나감 기대값 검증",Seconds=1};
+        missSnapshot.Dps.Cycles.Add(missCycle);
+        missCycle.Terms.Add(new DpsSnapshot.Term{Row=0,Count=1});
+        string missDps=missSnapshot.Calculate();
+        if(!missDps.Contains(">90</color>")||Math.Abs(DamageTooltip.Snapshot.ApplyRawSteps(100,missSnapshot.RawSteps,EDamageElementalType.Physical,0,0,-1)-50)>0.001f||
+            Math.Abs(DamageTooltip.Snapshot.ApplyRawSteps(100,missSnapshot.RawSteps,EDamageElementalType.Physical,0,0,1)-100)>0.001f)
+            throw new Exception("Pointed Bat probability was not reflected as 20% x 50% = 10% expected DPS reduction");
+        Log("PASS probabilistic miss uses expected DPS while preserving detail minimum/maximum");
+        var guaranteed=new DamageTooltip.Snapshot{CriticalChance=100,Template="{damage:0}"};
+        guaranteed.Rows.Add(new[]{new DamageTooltip.Hit{Raw=10}});
+        string guaranteedText=guaranteed.Calculate();
+        if(!guaranteedText.Contains("치명타 15")||guaranteedText.Contains("10 / 15"))
+            throw new Exception("Guaranteed critical row did not hide normal damage");
+        var possible=new DamageTooltip.Snapshot{CriticalChance=99,Template="{damage:0}"};
+        possible.Rows.Add(new[]{new DamageTooltip.Hit{Raw=10}});
+        if(!possible.Calculate().Contains("10 / 15"))throw new Exception("Sub-100 critical row hid normal damage");
+        Log("PASS typhoon triggers from weapon direct hits and true damage applies once: "+typhoonWithoutFlat+" -> "+typhoonWithFlat);
         var savvy=ItemDatabase.GetAllItemCategory().First(c=>c.Name=="교섭");
         foreach(var set in savvy.setStatus)Log("SAVVY set "+set.itemCount+"="+set.status);
         var effect=savvy.comboEffectPrefab?savvy.comboEffectPrefab.GetComponent<ComboEffectBase>():null;

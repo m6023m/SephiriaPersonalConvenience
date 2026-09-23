@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Text;
 using System.Reflection;
 using HarmonyLib;
@@ -23,13 +23,24 @@ namespace SephiriaDicePreview
             public float AfterFactors;
             public float[] SpawnFactors;
             public int JellyfishBonus, All, DashBonus, Critical, Flat, NonDirectCritical;
-            public int Elite;
+            public int Elite,ArmorIgnore;
+            public float CriticalChance,WeaponCriticalChance;
+            public float[] OwnElementChance,LeaderElementChance;
+            internal double Chance()
+            {
+                double chance=CriticalChance+(Direct?WeaponCriticalChance:0);
+                int element=(int)EffectiveElement;
+                if(OwnElementChance!=null&&element>=0&&element<OwnElementChance.Length)chance+=OwnElementChance[element];
+                if(LeaderElementChance!=null&&element>=0&&element<LeaderElementChance.Length)chance+=LeaderElementChance[element];
+                return chance;
+            }
             public bool Direct=true;
             public bool QuantizeSpawn=true;
             public bool ExecutionEnabled;
             public EDamageElementalType DamageElement=EDamageElementalType.Physical;
             public bool ForcedChaos;
             private EDamageElementalType EffectiveElement {get{return ForcedChaos?EDamageElementalType.Chaos:DamageElement;}}
+            internal EDamageElementalType DisplayElement {get{return EffectiveElement;}}
             public int[] ElementCritical;
             public float[] OwnFrostbite,LeaderFrostbite;
             public DamageTooltip.Snapshot.RawStep[] OwnRawSteps,LeaderRawSteps;
@@ -39,7 +50,7 @@ namespace SephiriaDicePreview
             {
                 var copy=(Hit)MemberwiseClone();copy.AttackFactor*=factor;copy.AfterFactors*=factor;return copy;
             }
-            public DamageTooltip.Pair Evaluate(bool elite=false,float rawFactor=1,int extraCritical=0,float criticalMultiplier=1,bool canCritical=true,float projectileDamagePercent=0,int conditions=0)
+            public DamageTooltip.Pair Evaluate(bool elite=false,float rawFactor=1,int extraCritical=0,float criticalMultiplier=1,bool canCritical=true,float projectileDamagePercent=0,int conditions=0,int? targetDefense=null,int ignoreDefense=0,int? flatOverride=null,int randomMode=0)
             {
                 float attack=BaseAttack+Element*ElementRatio;
                 if(SpawnFactors!=null)foreach(float f in SpawnFactors)attack*=f;
@@ -52,8 +63,8 @@ namespace SephiriaDicePreview
                 float raw=attack*AttackFactor+AfterFactors;
                 raw+=raw*projectileDamagePercent/100f;
                 raw*=rawFactor;
-                raw=DamageTooltip.Snapshot.ApplyRawSteps(raw,OwnRawSteps,EffectiveElement,conditions);
-                raw=DamageTooltip.Snapshot.ApplyRawSteps(raw,LeaderRawSteps,EffectiveElement,conditions);
+                raw=DamageTooltip.Snapshot.ApplyRawSteps(raw,OwnRawSteps,EffectiveElement,conditions,0,randomMode);
+                raw=DamageTooltip.Snapshot.ApplyRawSteps(raw,LeaderRawSteps,EffectiveElement,conditions,0,randomMode);
                 float normal=raw;
                 if(Direct)normal+=raw*(DashBonus/100f);
                 float all=raw*(All/100f),follower=raw*FollowerBonus/100f,negotiation=raw*(NegotiationBonus/100f),eliteBonus=elite?raw*Elite/100f:0;
@@ -70,7 +81,8 @@ namespace SephiriaDicePreview
                 if(ElementCritical!=null&&(int)EffectiveElement>=0&&(int)EffectiveElement<ElementCritical.Length)criticalValue+=ElementCritical[(int)EffectiveElement];
                 if(criticalMultiplier!=1)criticalValue=(int)Math.Round(criticalValue*criticalMultiplier,MidpointRounding.ToEven);
                 float critical=canCritical?criticalValue/100f:0;
-                return new DamageTooltip.Pair{Normal=DamageTooltip.FinishOutgoing(normal,DefenseBonus,Flat),Critical=DamageTooltip.FinishOutgoing(normal+normal*critical,DefenseBonus,Flat),Execution=DamageTooltip.FinishOutgoing(normal+normal*critical*2f,DefenseBonus,Flat)};
+                int flat=flatOverride??Flat;
+                return new DamageTooltip.Pair{Normal=DamageTooltip.FinishOutgoing(normal,DefenseBonus,flat,targetDefense,ignoreDefense),Critical=DamageTooltip.FinishOutgoing(normal+normal*critical,DefenseBonus,flat,targetDefense,ignoreDefense),Execution=DamageTooltip.FinishOutgoing(normal+normal*critical*2f,DefenseBonus,flat,targetDefense,ignoreDefense)};
             }
             public string Signature()
             {
@@ -81,7 +93,10 @@ namespace SephiriaDicePreview
                 b.Append('|').Append(Direct).Append('|').Append(NonDirectCritical);
                 b.Append('|').Append(QuantizeSpawn);
                 b.Append('|').Append(ExecutionEnabled);
-                b.Append('|').Append(Elite);
+                b.Append('|').Append(Elite).Append('|').Append(ArmorIgnore);
+                b.Append('|').Append(CriticalChance.ToString("R")).Append('|').Append(WeaponCriticalChance.ToString("R"));
+                foreach(var values in new[]{OwnElementChance,LeaderElementChance})
+                {b.Append("|element-chance:");if(values!=null)foreach(float value in values)b.Append(value.ToString("R")).Append(',');}
                 b.Append('|').Append((int)DamageElement).Append("|element-critical:");
                 b.Append(ForcedChaos).Append('|');
                 if(ElementCritical!=null)foreach(int bonus in ElementCritical)b.Append(bonus).Append(',');
@@ -121,7 +136,14 @@ namespace SephiriaDicePreview
             int contribution=leader.GetCustomStatUnsafe("FOLLOWERCRITICALCONTRIBUTE");
             int leaderCritical=contribution>0?(int)(leader.GetCustomStat(ECustomStat.CriticalDamageBonus)*contribution*.01f):0;
             ownCritical+=leaderCritical;
+            float ownDirect,leaderDirect;
+            var ownChance=ConditionalDamageProfiles.CaptureCriticalChance(unit,OwnBeforeAttack,out ownDirect);
+            var leaderChance=ConditionalDamageProfiles.CaptureCriticalChance(leader,LeaderBeforeAttack,out leaderDirect);
             return new Hit{AttackFactor=factor,
+                OwnElementChance=ownChance,LeaderElementChance=leaderChance,
+                CriticalChance=unit.GetCustomStat(ECustomStat.Critical)/100f+leader.GetCustomStatUnsafe("FOLLOWERCRITICAL")/100f+
+                    (contribution>0?leader.GetCustomStat(ECustomStat.Critical)*contribution*.0001f:0),
+                WeaponCriticalChance=unit.GetCustomStatUnsafe("WEAPONCRITICAL")/100f+ownDirect+leaderDirect,
                 ForcedChaos=unit.isForcedChaosDamage,
                 ElementCritical=CaptureElementCritical(unit,leader),
                 OwnFrostbite=ConditionalDamageProfiles.CaptureFrostbite(unit,OwnBeforeAttack),
@@ -129,7 +151,7 @@ namespace SephiriaDicePreview
                 OwnRawSteps=ConditionalDamageProfiles.CaptureFrostbiteSteps(unit,OwnBeforeAttack),
                 LeaderRawSteps=ConditionalDamageProfiles.CaptureFrostbiteSteps(leader,LeaderBeforeAttack),
                 DebuffBonus=unit.GetCustomStatUnsafe("DEBUFFDAMAGE"),PoisonDebuffBonus=unit.GetCustomStatUnsafe("POISONDEBUFFDAMAGEBONUS"),
-                Elite=unit.GetCustomStatUnsafe("ELITEDAMAGE"),
+                Elite=unit.GetCustomStatUnsafe("ELITEDAMAGE"),ArmorIgnore=unit.GetCustomStatUnsafe("IGNOREDEFENSE")+leader.GetCustomStatUnsafe("IGNOREDEFENSE"),
                 ExecutionEnabled=(contribution>0?leader.GetCustomStat(ECustomStat.EXECUTION):unit.GetCustomStat(ECustomStat.EXECUTION))>0,
                 All=unit.GetCustomStat(ECustomStat.AllDamageBonus)+leader.GetCustomStat(ECustomStat.AllDamageBonus),
                 FollowerBonus=leader.GetCustomStatUnsafe("FOLLOWERDAMAGE"),NegotiationBonus=leader.GetCustomStat(ECustomStat.ADVANCED_NEGOTIATION)>0?leader.GetCustomStat(ECustomStat.Negotiation):0,
@@ -194,37 +216,47 @@ namespace SephiriaDicePreview
             text.AppendLine("소환 시 공격력 소수점 절삭 · 동료 피해·교섭 보정 반영 · 소환 행동 자체의 직접 타격 없음");
             return text.ToString().TrimEnd();
         }
+        internal static bool CaptureWeaponSummon(NewWeaponFireData_Summon fire,DamageTooltip.Hit input,PlayerAvatar player,
+            out UnitAvatar unit,out Hit hit)
+        {
+            unit=fire&&fire.summonPrefab?fire.summonPrefab.GetComponent<UnitAvatar>():null;hit=null;
+            if(!unit)return false;
+            hit=Capture(unit,player,1);
+            // Native stores the resolved fire damage as the follower's integer
+            // attack. Keep the source formula as spawn factors so quantization
+            // occurs in the worker before follower-only bonuses.
+            hit.BaseAttack=input.Raw+input.ResourceAmount*input.ResourcePerUnit;
+            hit.SpawnFactors=input.Factors;hit.AfterFactors=input.AfterFactors;
+            return true;
+        }
         internal static bool TryCharm(Charm_SummonUnit source,Charm_SummonUnit live,int level,PlayerAvatar p,out string text)
         {
             text=null;
+            UnitAvatar unit;Hit hit;
+            if(!CaptureCharm(source,live,level,p,out unit,out hit))return false;
+            string attacks;if(!TryAttacks(unit,hit,p,out attacks))return false;
+            bool summoned=live&&SummonedUnit.GetValue(live) as UnitAI_NewBasic;
+            text="소환 동료 공격별 1타 · 일반 / 치명타\n"+attacks+"\n"+(summoned?"소환된 동료의 현재 능력치":"소환 전 기본 상태")+" 기준 · 적 방어 적용 전\n소환 공격력의 소수점 절삭·동료 피해·교섭·치명타 전달 반영";
+            if(source.isJellyfish&&p.GetCustomStatUnsafe("JELLYFISHDOUBLEATTACK")>0)text+="\n연속 공격 활성: 각 공격이 실제 적중한 경우에만 합산";
+            return true;
+        }
+        internal static bool CaptureCharm(Charm_SummonUnit source,Charm_SummonUnit live,int level,PlayerAvatar p,out UnitAvatar unit,out Hit hit)
+        {
             var summoned=live?SummonedUnit.GetValue(live) as UnitAI_NewBasic:null;
-            var unit=summoned?summoned.Avatar:source.unitPrefab?source.unitPrefab.GetComponent<UnitAvatar>():null;
-            if(!unit)return false;
-            var hit=Capture(unit,p,1);
+            unit=summoned?summoned.Avatar:source.unitPrefab?source.unitPrefab.GetComponent<UnitAvatar>():null;
+            hit=null;if(!unit)return false;
+            hit=Capture(unit,p,1);
             hit.BaseAttack=source.damageByLevel.SafeRandomAccess(source.LevelToIdx(level));
             if(!summoned&&live)hit.ForcedChaos=ReadChaoticMode(live);
             hit.SpawnFactors=new[]{1+(live && live.netId!=0?live.RequestCharmDamageBonusOnRoot():p.GetCustomStatUnsafe("CHARMDAMAGEBONUS"))/100f};
             if(source.isJellyfish)hit.JellyfishBonus=p.GetCustomStatUnsafe("JELLYFISHBASICDAMAGE");
-            string attacks;if(!TryAttacks(unit,hit,p,out attacks))return false;
-            text="소환 동료 공격별 1타 · 일반 / 치명타\n"+attacks+"\n"+(summoned?"소환된 동료의 현재 능력치":"소환 전 기본 상태")+" 기준 · 적 방어 적용 전\n소환 공격력의 소수점 절삭·동료 피해·교섭·치명타 전달 반영";
-            if(source.isJellyfish&&p.GetCustomStatUnsafe("JELLYFISHDOUBLEATTACK")>0)text+="\n연속 공격 활성: 각 공격이 실제 적중한 경우에만 합산";
             return true;
         }
         internal static bool TryBallista(Charm_MiniBallista source,Charm_MiniBallista live,int level,PlayerAvatar p,out string text)
         {
             text=null;
-            var summoned=live?BallistaUnit.GetValue(live) as Unit_MiniBallista:null;
-            var unit=summoned?summoned:source.unitPrefab?source.unitPrefab.GetComponent<Unit_MiniBallista>():null;
-            if(!unit||!unit.bulletPrefab)return false;
-            var hit=Capture(unit,p,1);
-            // Summon and level-up use different native indices. For the actual level, read
-            if(!summoned&&live)hit.ForcedChaos=ReadChaoticMode(live);
-            // the spawned count rather than silently replacing it with the catalog value.
-            bool actual=summoned&&live.DisplayedLevel==level;
-            int count=actual?summoned.bulletCount:source.bulletCountByLevel.SafeRandomAccess(source.LevelToIdx(level));
-            hit.BaseAttack=source.ballistaDamage;
-            hit.DamageElement=EDamageElementalType.Lightning;
-            hit.SpawnFactors=new[]{1+(live&&live.netId!=0?live.RequestCharmDamageBonusOnRoot():p.GetCustomStatUnsafe("CHARMDAMAGEBONUS"))/100f};
+            Unit_MiniBallista unit;Hit hit;int count;bool actual;
+            if(!CaptureBallista(source,live,level,p,out unit,out hit,out count,out actual))return false;
             text="소형 발리스타 · 번개 탄환 1발 · 일반 / 치명타\n"+ProjectileDamageProfiles.Describe(p,new DamageTooltip.Hit{Follower=hit},unit.bulletPrefab,"탄환")+
                 "\n동시 발사 "+count+"발 · 같은 적에게 실제 적중한 탄환만 합산\n동료 피해·교섭·치명타 전달 반영 · 적 방어 적용 전";
             int cloud=source.addCloudPercentByLevel.SafeRandomAccess(source.LevelToIdx(level));
@@ -233,19 +265,64 @@ namespace SephiriaDicePreview
             if(!actual)text+="\n표시 레벨로 소환할 때의 발사 수 기준";
             return true;
         }
+        internal static bool CaptureBallista(Charm_MiniBallista source,Charm_MiniBallista live,int level,PlayerAvatar p,
+            out Unit_MiniBallista unit,out Hit hit,out int count,out bool actual)
+        {
+            var summoned=live?BallistaUnit.GetValue(live) as Unit_MiniBallista:null;
+            unit=summoned?summoned:source.unitPrefab?source.unitPrefab.GetComponent<Unit_MiniBallista>():null;
+            hit=null;count=0;actual=false;if(!unit||!unit.bulletPrefab)return false;
+            hit=Capture(unit,p,1);
+            if(!summoned&&live)hit.ForcedChaos=ReadChaoticMode(live);
+            // Summon and level-up use different native indices. For the actual
+            // level, read the spawned count instead of replacing it silently.
+            actual=summoned&&live.DisplayedLevel==level;
+            count=actual?summoned.bulletCount:source.bulletCountByLevel.SafeRandomAccess(source.LevelToIdx(level));
+            hit.BaseAttack=source.ballistaDamage;
+            hit.DamageElement=EDamageElementalType.Lightning;
+            hit.SpawnFactors=new[]{1+(live&&live.netId!=0?live.RequestCharmDamageBonusOnRoot():p.GetCustomStatUnsafe("CHARMDAMAGEBONUS"))/100f};
+            return true;
+        }
         internal static bool TryLead(Charm_LeadNPC source,Charm_LeadNPC live,int level,PlayerAvatar p,out string text)
         {
             text=null;
-            var following=live?Following.GetValue(live) as UnitAvatar:null;
-            var unit=following?following:source.npcSocialID&&source.npcSocialID.avatarPrefab?source.npcSocialID.avatarPrefab.GetComponent<UnitAvatar>():null;
-            if(!unit)return false;
-            var hit=Capture(unit,p,1);hit.BaseAttack=unit.attack;
-            if(!following&&live)hit.ForcedChaos=ReadChaoticMode(live);
-            // The live avatar already contains its currently applied contract bonus.
-            hit.All+=source.levelBonusByLevel.SafeRandomAccess(source.LevelToIdx(level))-(following?(int)LeadBonus.GetValue(live):0);
+            UnitAvatar unit;Hit hit;bool following;
+            if(!CaptureLead(source,live,level,p,out unit,out hit,out following))return false;
             string attacks;if(!TryAttacks(unit,hit,p,out attacks))return false;
             text="동행 동료 공격별 1타 · 일반 / 치명타\n"+attacks+"\n"+(following?"현재 동료의 능력치·장비 효과 반영":"동행 전 기본 상태 · 소환 시 무작위 장비에 따라 달라질 수 있음")+"\n동행 증표 피해 증가·동료 피해·교섭·치명타 전달 반영 · 적 방어 적용 전";
             return true;
+        }
+        internal static bool CaptureLead(Charm_LeadNPC source,Charm_LeadNPC live,int level,PlayerAvatar p,out UnitAvatar unit,out Hit hit,out bool following)
+        {
+            var actual=live?Following.GetValue(live) as UnitAvatar:null;
+            following=actual;unit=actual?actual:source.npcSocialID&&source.npcSocialID.avatarPrefab?source.npcSocialID.avatarPrefab.GetComponent<UnitAvatar>():null;
+            hit=null;if(!unit)return false;
+            hit=Capture(unit,p,1);hit.BaseAttack=unit.attack;
+            if(!actual&&live)hit.ForcedChaos=ReadChaoticMode(live);
+            // The live avatar already contains its currently applied contract bonus.
+            hit.All+=source.levelBonusByLevel.SafeRandomAccess(source.LevelToIdx(level))-(actual?(int)LeadBonus.GetValue(live):0);
+            return true;
+        }
+        internal static DpsProjectiles.Result CaptureFollowerFire(Hit source,NewWeaponFireData fire,PlayerAvatar player,float factor=1)
+        {
+            if(!fire)return new DpsProjectiles.Result{Unavailable="동료 공격 데이터 없음"};
+            var prepared=source.Scaled(factor*fire.damageMultiplier*fire.CalculateFinalDamageMultiplier(0));
+            prepared.DamageElement=fire.damageElementalType;
+            return DpsProjectiles.Weapon(new DamageTooltip.WeaponAttackSample{Fire=fire,
+                Hits=new System.Collections.Generic.List<DamageTooltip.Hit>{new DamageTooltip.Hit{Follower=prepared}}},player,false);
+        }
+        internal static DpsProjectiles.Result CaptureFollowerWeaponFire(UnitAvatar unit,Hit source,WeaponSimple weapon,NewWeaponFireData fire,int kind,PlayerAvatar player)
+        {
+            if(!unit||!weapon||!fire)return new DpsProjectiles.Result{Unavailable="동료 장착 무기 공격 데이터 없음"};
+            object[] args={unit,fire.damageElementalType,fire.relatedStatFormula,EDamageElementalType.Normal};
+            var hit=source.Scaled(1);hit.QuantizeSpawn=false;
+            hit.BaseAttack=(float)Related.Invoke(weapon,args);hit.Element=0;hit.ElementRatio=0;
+            hit.DamageElement=fire.useElementalTypeFromRelatedStatFormula?(EDamageElementalType)args[3]:fire.damageElementalType;
+            int mp=WeaponBuffPreview.UsedMp(weapon,kind,unit);
+            hit.SpawnFactors=new[]{1+unit.GetCustomStat(ECustomStat.WeaponDamageBonus)/100f,
+                1+unit.GetCustomStat(kind==0?ECustomStat.BasicAttackDamageBonus:kind==1?ECustomStat.DashAttackDamageBonus:ECustomStat.SpecialAttackDamageBonus)/100f,
+                mp>0?1+unit.GetCustomStatUnsafe("MPSKILLDAMAGE")/100f:1,
+                1+unit.GetCustomStat(ECustomStat.FinalWeaponDamage)/100f};
+            return CaptureFollowerFire(hit,fire,player,1);
         }
         internal static bool ReadChaoticMode(Charm_Basic charm)
         {

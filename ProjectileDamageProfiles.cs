@@ -244,7 +244,7 @@ namespace SephiriaDicePreview
             var result=Scale(hit,melee.defaultDamageRatio);
             if(result.Follower!=null)result.Follower.AfterFactors+=melee.additionalDamage;
             else result.AfterFactors+=melee.additionalDamage;
-            return label+": "+DescribeMelee(player,result,melee);
+            return label+": "+DescribeMelee(player,SelectMeleeDamage(result,melee),melee);
         }
         internal static void PrepareMelee(DamageTooltip.Hit hit,NewWeaponFireData fire,float? ratioOverride=null)
         {
@@ -269,21 +269,35 @@ namespace SephiriaDicePreview
             var melee=data&&data.projectilePrefab?data.projectilePrefab.GetComponent<MeleeCollision>():null;
             return DescribeMelee(player,prepared,melee);
         }
+        internal static string DescribeMelee(PlayerAvatar player,DamageTooltip.Hit[] prepared,NewWeaponFireData fire)
+        {
+            var data=fire as NewWeaponFireData_MeleeAttack;
+            var melee=data&&data.projectilePrefab?data.projectilePrefab.GetComponent<MeleeCollision>():null;
+            string result=DamageTooltip.Hits(player,prepared);
+            if(melee&&melee.multiHit>1)result+="\n"+melee.multiHit+"회 · 간격 "+melee.multiHitIntervalTimer.time.ToString("0.###")+"초";
+            return result;
+        }
+        internal static DamageTooltip.Hit SelectMeleeDamage(DamageTooltip.Hit prepared,NewWeaponFireData fire)
+        {
+            var data=fire as NewWeaponFireData_MeleeAttack;
+            var distance=data&&data.projectilePrefab?data.projectilePrefab.GetComponent<MeleeCollision_Circle_Distance>():null;
+            return SelectMeleeDamage(prepared,distance);
+        }
+        internal static DamageTooltip.Hit SelectMeleeDamage(DamageTooltip.Hit prepared,MeleeCollision melee)
+        {
+            var distance=melee as MeleeCollision_Circle_Distance;
+            if(!distance||DamageTooltip.CurrentCapture==null||!DamageTooltip.CurrentCapture.FullConditions)return prepared;
+            var outside=Scale(prepared,1+distance.damageBonus);
+            // Native outer contact does not include melee additionalDamage.
+            if(outside.Follower!=null)outside.Follower.AfterFactors=0;
+            else outside.AfterFactors=0;
+            return outside;
+        }
         private static string DescribeMelee(PlayerAvatar player,DamageTooltip.Hit prepared,MeleeCollision melee)
         {
             if(!melee)return DamageTooltip.Hits(player,prepared);
             string result=DamageTooltip.Hits(player,prepared);
-            var distance=melee as MeleeCollision_Circle_Distance;
-            if(distance)
-            {
-                // The outside branch omits additionalDamage entirely, including
-                // any transform callback additions to that field.
-                var outside=Scale(prepared,1+distance.damageBonus);
-                if(outside.Follower!=null)outside.Follower.AfterFactors=0;
-                else outside.AfterFactors=0;
-                result="안쪽 1타: "+result+"\n바깥쪽 1타: "+DamageTooltip.Hits(player,outside);
-            }
-            if(melee.multiHit>1)result+="\n최대 "+melee.multiHit+"회 판정 · 재판정 간격 "+melee.multiHitIntervalTimer.time.ToString("0.###")+"초 · 범위 내 유지 시 추가 적중";
+            if(melee.multiHit>1)result+="\n"+melee.multiHit+"회 · 간격 "+melee.multiHitIntervalTimer.time.ToString("0.###")+"초";
             return result;
         }
         internal static string Describe(PlayerAvatar player,DamageTooltip.Hit hit,GameObject prefab,string label)
@@ -292,7 +306,7 @@ namespace SephiriaDicePreview
             DescribeInto(player,hit,prefab,label,text,new HashSet<int>());
             return text.ToString().TrimEnd();
         }
-        private static DamageTooltip.Hit Scale(DamageTooltip.Hit hit,float factor,bool keepCritical=true,EDamageElementalType? element=null,EDamageType? damageType=null)
+        internal static DamageTooltip.Hit Scale(DamageTooltip.Hit hit,float factor,bool keepCritical=true,EDamageElementalType? element=null,EDamageType? damageType=null)
         {
             if(hit.Follower!=null)
             {
@@ -300,13 +314,14 @@ namespace SephiriaDicePreview
                 if(element.HasValue)follower.DamageElement=element.Value;
                 if(damageType.HasValue)follower.ElementalEffect=damageType.Value==EDamageType.ElementalEffectDamage;
                 return new DamageTooltip.Hit{Follower=follower,
+                    Magic=hit.Magic,ExtraCriticalChance=keepCritical?hit.ExtraCriticalChance:0,
                     ProjectileDamagePercent=keepCritical?hit.ProjectileDamagePercent:0,
                     CanCritical=keepCritical?hit.CanCritical:true,
                     ExtraCritical=keepCritical?hit.ExtraCritical:0,
                     CriticalRateMultiplier=keepCritical?hit.CriticalRateMultiplier:1};
             }
             var factors=new List<float>(hit.Factors??new float[0]);factors.Add(factor);
-            return new DamageTooltip.Hit{Raw=hit.Raw,Element=element??hit.Element,ResourceAmount=hit.ResourceAmount,ResourcePerUnit=hit.ResourcePerUnit,Factors=factors.ToArray(),AfterFactors=hit.AfterFactors*factor,ProjectileDamagePercent=keepCritical?hit.ProjectileDamagePercent:0,Weapon=hit.Weapon,ElementalEffect=damageType.HasValue?damageType.Value==EDamageType.ElementalEffectDamage:hit.ElementalEffect,CanCritical=keepCritical?hit.CanCritical:true,ExtraCritical=keepCritical?hit.ExtraCritical:0,CriticalRateMultiplier=keepCritical?hit.CriticalRateMultiplier:1};
+            return new DamageTooltip.Hit{Magic=hit.Magic,ExtraCriticalChance=keepCritical?hit.ExtraCriticalChance:0,Raw=hit.Raw,Element=element??hit.Element,ResourceAmount=hit.ResourceAmount,ResourcePerUnit=hit.ResourcePerUnit,Factors=factors.ToArray(),AfterFactors=hit.AfterFactors*factor,ProjectileDamagePercent=keepCritical?hit.ProjectileDamagePercent:0,Weapon=hit.Weapon,ElementalEffect=damageType.HasValue?damageType.Value==EDamageType.ElementalEffectDamage:hit.ElementalEffect,CanCritical=keepCritical?hit.CanCritical:true,ExtraCritical=keepCritical?hit.ExtraCritical:0,CriticalRateMultiplier=keepCritical?hit.CriticalRateMultiplier:1};
         }
         private static void DescribeInto(PlayerAvatar p,DamageTooltip.Hit hit,GameObject prefab,string label,StringBuilder text,HashSet<int> path)
         {
@@ -360,7 +375,7 @@ namespace SephiriaDicePreview
             }
             else if(destroy&&(destroy.GetType()==typeof(BulletDestroyModule_ProgressiveExplode)||destroy.GetType()==typeof(BulletDestroyModule_Linebomb)))
             {
-                var wave=Scale(hit,bullet.defaultDamageRatio,false,EDamageElementalType.Physical,EDamageType.Projectile);wave.Weapon=false;
+                var wave=Scale(hit,bullet.defaultDamageRatio,false,EDamageElementalType.Physical,EDamageType.Projectile);wave.Weapon=false;wave.Magic=false;
                 if(wave.Follower!=null)wave.Follower.Direct=false;
                 text.Append(label).Append(" · 연쇄 폭발의 대상 1명: ").AppendLine(DamageTooltip.Hits(p,wave));
                 text.AppendLine("연쇄 폭발은 적중 목록 공유 · 같은 적에 중복 합산하지 않음");

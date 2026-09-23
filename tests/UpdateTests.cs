@@ -66,7 +66,7 @@ class UpdateTests
         Assert(UpdateCore.ApplyPending(cache, plugins) == null, "repeated boot is harmless");
         UpdateCore.CommitStage(cache, NewStage(cache, next), manifest);
         Assert(UpdateCore.ApplyPending(cache, plugins).StartsWith("Already installed"), "equal version is discarded");
-        var older = new Manifest { schema = 1, version = "0.0.0", filename = UpdateCore.FileName,
+        var older = new Manifest { schema = 1, version = System.Reflection.AssemblyName.GetAssemblyName(old).Version.ToString(3), filename = UpdateCore.FileName,
             size = new FileInfo(old).Length, sha256 = UpdateCore.Hash(old) };
         UpdateCore.CommitStage(cache, NewStage(cache, old), older);
         Reject(() => UpdateCore.ApplyPending(cache, plugins), "reject downgrade");

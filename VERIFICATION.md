@@ -62,3 +62,13 @@ The release DLL was built in the reconciled clone and rendered in an isolated mu
 Calculation logic is the previously audited local implementation: changed-case checks cover inactive conditional artifacts, zero-MP basic/dash versus MP-paid attacks, integer floor display, and six attacking artifacts in four loadouts. These were calculation-output tests, not a claim of every weapon's actual hit damage verification. Earlier catalog checks distinguished wiki-listed items from dummy/deleted entries. No combat simulation is distributed; the removal script is for older separately installed test modules.
 
 DPS is explicitly deferred. Multiplayer and every live conditional combat outcome are not verified. Numeric worker execution/caching and previous-result display were exercised in earlier isolated tests; this release's focused runtime rerun verifies the changed UI.
+
+## v1.0.8 DPS and additional damage
+
+Fresh baseline: canonical https://github.com/m6023m/SephiriaPersonalConvenience, main efe0cdf6ce6f1d83a1e4bcb1a5451bfa47da2f9a, fetched 2026-09-23 into a clean worktree. Existing retry behavior and update protocol have no functional changes.
+
+The final candidate was built from this worktree and run in the muted, save-isolated CombatTestArena runtime. The full damage tooltip smoke completed with PASS COMPLETE. It verified worker-thread calculation and caching, no repeated idle recalculation, retained prior results during recalculation, native damage projection, weapon-linked Typhoon damage, fixed and elemental per-hit additions, and probability-weighted expected DPS for Pointed Bat while retaining the detail range. Snapshot collection covered 164 cases with a 23.5958 ms maximum and 0.3451 ms mean in this run.
+
+Updater unit tests passed all 25 integrity, staging, lock, backup, equal-version, downgrade and corrupt-manifest checks. The test fixture now derives the downgrade manifest version from the supplied old DLL so it validates a real previous release.
+
+Release plugin SHA256: 70F2C1D8F7F263E03BD8441A92A1AD766392B6CDEEE272B4FD63301F5E5A7C60. Updater SHA256: 474E8E05396C9B1374456D9F5AB57BA8A0321814CF4C4D13F77E5118410A1421. The artifact-specific sustained-DPS gaps found during the requested investigation remain documented in ARTIFACT_DPS_AUDIT.md and are not claimed as implemented.
